@@ -612,6 +612,73 @@ _run() {
   echo "Check output: cat $outfile"
 }
 
+# Recover crashed Claude sessions
+_recover() {
+  local target="$1"
+
+  if [[ "$target" == "--all" ]]; then
+    # Recover all crashed sessions
+    local recovered=0
+    if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+      local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_current_command}" 2>/dev/null)
+      while IFS='|' read -r wname pcmd; do
+        [[ "$wname" == "orchestra" ]] && continue
+        [[ -z "${PROJECTS[$wname]}" ]] && continue
+        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+          echo "Recovering $wname..."
+          tmux send-keys -t "$ORCH_SESSION:$wname" "$CLAUDE_BIN --dangerously-skip-permissions --resume" Enter
+          recovered=$((recovered + 1))
+          _log_history "RECOVER $wname"
+        fi
+      done <<< "$windows"
+    fi
+    echo "Recovered $recovered sessions."
+    return 0
+  fi
+
+  if [[ -z "$target" ]]; then
+    echo "Usage: dev recover <project> | dev recover --all"
+    return 1
+  fi
+
+  if [[ -z "${PROJECTS[$target]}" ]]; then
+    echo "Unknown project: $target"
+    return 1
+  fi
+
+  if ! _has_window "$target"; then
+    echo "No window for $target — start with: dev start $target"
+    return 1
+  fi
+
+  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+    echo "$target: Claude is already running"
+    return 0
+  fi
+
+  echo "Recovering $target with --resume..."
+  tmux send-keys -t "$ORCH_SESSION:$target" "$CLAUDE_BIN --dangerously-skip-permissions --resume" Enter
+  _log_history "RECOVER $target"
+
+  # Wait for readiness
+  local max_wait=15
+  local waited=0
+  while [[ $waited -lt $max_wait ]]; do
+    pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+    [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && break
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if [[ $waited -ge $max_wait ]]; then
+    echo "WARNING: Claude may not be ready in $target"
+  else
+    echo "Recovered: $target"
+    _notify "$target" "Session recovered"
+  fi
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -645,6 +712,7 @@ case "$1" in
   wait)           _wait "$2" "$3" ;;
   ask)            _ask "$2" "${@:3}" ;;
   run)            _run "$2" "${@:3}" ;;
+  recover)        _recover "$2" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
@@ -665,6 +733,8 @@ case "$1" in
     echo "  dev wait <project> [sec]   Wait for worker to finish, then notify"
     echo "  dev ask <project> <msg>    Send question, wait for response, show it"
     echo "  dev run <project> <task>   Run non-interactive task (claude --print)"
+    echo "  dev recover <project>     Recover crashed session (claude --resume)"
+    echo "  dev recover --all         Recover all crashed sessions"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
