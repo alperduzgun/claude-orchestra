@@ -358,6 +358,31 @@ _broadcast() {
   echo "Broadcast to $count Claude sessions (skipped $skipped non-Claude windows)."
 }
 
+# Peek at a worker's recent output
+_peek() {
+  local name="$1"
+  local lines="${2:-50}"
+
+  if [[ -z "$name" ]]; then
+    echo "Usage: dev peek <project> [lines]"
+    return 1
+  fi
+
+  if ! _has_window "$name"; then
+    echo "No window for $name"
+    return 1
+  fi
+
+  # Capture pane content and strip ANSI/TUI garbage
+  tmux capture-pane -t "$ORCH_SESSION:$name" -p -S "-$lines" | \
+    sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
+    sed 's/\x1b\][^\x07]*\x07//g' | \
+    tr -d '\xc2\xa0' | \
+    sed 's/[[:cntrl:]]//g' | \
+    grep -v '^[[:space:]]*$' | \
+    tail -"$lines"
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -385,6 +410,7 @@ case "$1" in
   status)         _status ;;
   broadcast)      _broadcast "${@:2}" ;;
   orchestra|orch) _orchestra ;;
+  peek)           _peek "$2" "$3" ;;
   add)            _add "$2" "$3" ;;
   remove|rm)      _remove "$2" ;;
   help|-h)
@@ -392,6 +418,7 @@ case "$1" in
     echo "  dev orchestra              Start orchestrator (master session)"
     echo "  dev start <project>        Start Claude in a window (max $MAX_CLAUDE_SESSIONS)"
     echo "  dev send <project> <msg>   Send message to project's Claude"
+    echo "  dev peek <project> [lines] Read worker's recent output"
     echo "  dev broadcast <msg>        Send to all active Claude sessions"
     echo "  dev status                 Show all windows and their status"
     echo "  dev list                   List all projects"

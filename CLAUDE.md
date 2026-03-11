@@ -21,6 +21,8 @@ Kullanıcı sana ne istediğini söyler, sen worker session'ları başlatır, g�
 ~/.local/bin/dev status                  # Aktif window'lar, Claude durumu, session sayısı
 ~/.local/bin/dev start <alias>           # Claude session başlat (window olarak açılır)
 ~/.local/bin/dev send <alias> "message"  # Worker Claude'a mesaj gönder
+~/.local/bin/dev peek <alias>            # Worker'ın son çıktısını oku (cevabını gör)
+~/.local/bin/dev peek <alias> 100        # Son 100 satır
 ~/.local/bin/dev broadcast "message"     # Tüm aktif Claude session'larına gönder (sadece Claude olanlar)
 ~/.local/bin/dev kill <alias>            # Window kapat
 ```
@@ -32,8 +34,10 @@ Kullanıcı sana ne istediğini söyler, sen worker session'ları başlatır, g�
 - **Worker'a gönderilen mesajlarda tam context ver.** Worker bu konuşmayı bilmiyor. Dosya adı, hata mesajı, beklenen davranış — hepsini yaz.
 - **`dev send` sadece Claude çalışan window'lara gider.** Shell window'a göndermeye çalışırsan script hata verir.
 - **`dev broadcast` sadece Claude çalışanlara gider.** Shell window'lar otomatik atlanır.
+- **`dev peek <alias>` ile worker cevabını oku.** Görev gönderdikten sonra birkaç saniye bekle, sonra `dev peek <alias>` ile cevabını kontrol et.
 - **`dev start` readiness bekler.** Claude hazır olana kadar bekler ve window numarasını bildirir.
 - **Görev attıktan sonra window numarasını kullanıcıya söyle:** "invoice'a gönderdim, Ctrl+A 3 ile takip edebilirsin"
+- **Worker cevabını otomatik kontrol et.** `dev send` sonrası 10-15 saniye bekleyip `dev peek` ile sonucu oku ve kullanıcıya bildir.
 
 ## Mimari
 
