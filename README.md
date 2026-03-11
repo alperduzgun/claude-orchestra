@@ -165,6 +165,25 @@ Environment variables (set in your shell profile):
 - Messages >1000 chars use tmux buffer (avoids PTY silent truncation at 1024 bytes)
 - Installer never overwrites existing configs — asks before modifying
 
+## LLM Install Prompt
+
+Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up Claude Orchestra automatically:
+
+```
+Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
+
+Steps:
+1. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
+2. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
+3. Add my projects with `dev add <alias> <path>` for each project I want to manage
+4. If I use Ghostty, add `initial-command = ~/.local/bin/orchestra-attach` to ~/.config/ghostty/config
+5. If my tmux prefix is Ctrl+A, append the contents of ghostty.example.conf to my Ghostty config for Cmd+number window switching
+6. Add `set -g window-size latest` to my ~/.tmux.conf if not already present
+7. Run `dev orchestra` to start
+
+Read the README at ~/claude-orchestra/README.md for the full command reference.
+```
+
 ## License
 
 MIT
