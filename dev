@@ -531,6 +531,50 @@ _wait() {
   return 1
 }
 
+# Send a question and wait for response
+_ask() {
+  local name="$1"
+  shift
+  local msg="$*"
+  local timeout=120  # 2 min default
+
+  if [[ -z "$name" || -z "$msg" ]]; then
+    echo "Usage: dev ask <project> <question>"
+    return 1
+  fi
+
+  # Send the message
+  _send "$name" "$msg" || return 1
+
+  # Wait for completion
+  echo "Waiting for $name to respond..."
+  local waited=0
+  sleep 5  # give Claude a moment to start processing
+
+  while [[ $waited -lt $timeout ]]; do
+    _is_done "$name"
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+      _log_history "ASK-DONE $name (${waited}s)"
+      echo ""
+      echo "--- Response from $name ---"
+      _peek "$name" 30
+      _notify "$name" "Response ready"
+      return 0
+    elif [[ $result -eq 2 ]]; then
+      echo "$name: Claude not running"
+      return 2
+    fi
+    sleep 3
+    waited=$((waited + 3))
+  done
+
+  echo "$name: timed out waiting for response (${timeout}s)"
+  echo "--- Partial output ---"
+  _peek "$name" 20
+  return 1
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -562,6 +606,7 @@ case "$1" in
   watch)          _watch "$2" ;;
   history)        _history "$2" "$3" ;;
   wait)           _wait "$2" "$3" ;;
+  ask)            _ask "$2" "${@:3}" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
@@ -580,6 +625,7 @@ case "$1" in
     echo "  dev watch <project>        Live tail of worker's log"
     echo "  dev history [alias] [n]    Show recent task history"
     echo "  dev wait <project> [sec]   Wait for worker to finish, then notify"
+    echo "  dev ask <project> <msg>    Send question, wait for response, show it"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
