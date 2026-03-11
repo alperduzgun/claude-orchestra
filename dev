@@ -112,6 +112,49 @@ _claude_count() {
   echo "$count"
 }
 
+# Helper: check if a worker Claude is idle (done with task)
+# Returns 0 if idle, 1 if working, 2 if not Claude
+_is_done() {
+  local name="$1"
+  if ! _has_window "$name"; then return 2; fi
+
+  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then return 2; fi
+
+  # Capture last 10 lines and check for active work indicators
+  local output=$(tmux capture-pane -t "$ORCH_SESSION:$name" -p -S -10 2>/dev/null | \
+    sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\xc2\xa0' | sed 's/[[:cntrl:]]//g')
+
+  # Active patterns: Claude is still working
+  if echo "$output" | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files)'; then
+    return 1
+  fi
+
+  # Idle pattern: prompt line visible (❯ character)
+  if echo "$output" | grep -q '❯'; then
+    return 0
+  fi
+
+  # Unknown — assume still working
+  return 1
+}
+
+_done() {
+  local name="$1"
+  if [[ -z "$name" ]]; then
+    echo "Usage: dev done <project>"
+    return 1
+  fi
+  _is_done "$name"
+  local result=$?
+  case $result in
+    0) echo "$name: idle (done)" ;;
+    1) echo "$name: working..." ;;
+    2) echo "$name: not running Claude" ;;
+  esac
+  return $result
+}
+
 # Helper: check if a window exists in the orchestra session
 _has_window() {
   tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null | grep -qx "$1"
@@ -422,6 +465,7 @@ case "$1" in
   orchestra|orch) _orchestra ;;
   peek)           _peek "$2" "$3" ;;
   notify)         _notify "$2" "${@:3}" ;;
+  done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
   remove|rm)      _remove "$2" ;;
   help|-h)
@@ -435,6 +479,7 @@ case "$1" in
     echo "  dev list                   List all projects"
     echo "  dev add <alias> <path>     Add a project"
     echo "  dev remove <alias>         Remove a project"
+    echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
     echo "  dev cc <project>           Open Claude Code directly in project"
