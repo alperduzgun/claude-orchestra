@@ -1,0 +1,355 @@
+#!/bin/zsh
+# Dev - Project launcher & Claude Code orchestrator
+# Usage: dev <project> | dev list | dev start <project> | dev send <project> "msg"
+
+# Clear nested Claude Code detection
+unset CLAUDECODE
+
+DEV_DIR="$HOME/Development"
+PERSONAL_DIR="$DEV_DIR/Personal"
+CLAUDE_BIN="$HOME/.local/bin/claude"
+ORCH_SESSION="devenv"
+MAX_CLAUDE_SESSIONS=3
+# Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
+CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
+
+typeset -A PROJECTS
+# Top-level
+PROJECTS[warden]="$DEV_DIR/warden-panel"
+PROJECTS[toptantr]="$DEV_DIR/toptantr-ios-master"
+PROJECTS[adaptive]="$DEV_DIR/adaptive_platform_ui_temp"
+PROJECTS[commerce]="$DEV_DIR/CommerceMinder"
+PROJECTS[devkit]="$DEV_DIR/DevKit"
+# Personal - Flutter
+PROJECTS[oml]="$PERSONAL_DIR/OhMyLove"
+PROJECTS[daisy]="$PERSONAL_DIR/daisy-boilerplate"
+PROJECTS[terapizy]="$PERSONAL_DIR/terapizy-mobile"
+PROJECTS[interpress]="$PERSONAL_DIR/interpress-mobile-v5"
+PROJECTS[invoice]="$PERSONAL_DIR/invoice-main"
+PROJECTS[expathy]="$PERSONAL_DIR/expathy_apps-master"
+PROJECTS[binance]="$PERSONAL_DIR/binance_dart_tirtik_bot"
+PROJECTS[seller]="$PERSONAL_DIR/flutter-seller-app"
+PROJECTS[voivi]="$PERSONAL_DIR/voivi_flutter_voice_ai"
+PROJECTS[sphere]="$PERSONAL_DIR/dynamic_sphere_visualizer"
+PROJECTS[winzip]="$PERSONAL_DIR/flutter_winzipper_desktop_app"
+PROJECTS[theme]="$PERSONAL_DIR/flutter_theme_builder"
+PROJECTS[fmcp]="$PERSONAL_DIR/flutter_mcp"
+PROJECTS[mcpserver]="$PERSONAL_DIR/FlutterMcpServer"
+# Personal - Node/Python
+PROJECTS[aso]="$PERSONAL_DIR/aso-tracker"
+PROJECTS[callcenter]="$PERSONAL_DIR/AgentCallCenter"
+PROJECTS[wcore]="$PERSONAL_DIR/warden-core"
+PROJECTS[freemcp]="$PERSONAL_DIR/freemcp.space-backend"
+PROJECTS[appstore-mcp]="$PERSONAL_DIR/appnova-appstore-mcp"
+PROJECTS[marketing-mcp]="$PERSONAL_DIR/appnova-marketing-mcp"
+PROJECTS[searchads-mcp]="$PERSONAL_DIR/appnova-searchads-mcp"
+
+# Helper: count active Claude windows in the orchestra session
+_claude_count() {
+  local count=0
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
+    while IFS= read -r wname; do
+      [[ "$wname" == "orchestra" ]] && continue
+      local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && count=$((count + 1))
+    done <<< "$windows"
+  fi
+  echo "$count"
+}
+
+# Helper: check if a window exists in the orchestra session
+_has_window() {
+  tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null | grep -qx "$1"
+}
+
+# Helper: ensure the orchestra tmux session exists
+_ensure_session() {
+  if ! tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    tmux new-session -d -s "$ORCH_SESSION" -n "orchestra" -c "$DEV_DIR/orchestra"
+  fi
+}
+
+_list() {
+  echo "Available projects:"
+  echo ""
+  printf "  %-18s %-40s %s\n" "ALIAS" "PATH" "STATUS"
+  printf "  %-18s %-40s %s\n" "─────" "────" "──────"
+  for key in ${(ok)PROJECTS}; do
+    local dir="${PROJECTS[$key]}"
+    local sess_state=""
+    if _has_window "$key"; then
+      local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$key" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+        sess_state="[claude]"
+      else
+        sess_state="[shell]"
+      fi
+    fi
+    printf "  %-18s %-40s %s\n" "$key" "${dir/$HOME/~}" "$sess_state"
+  done
+  echo ""
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    echo "Windows in $ORCH_SESSION:"
+    tmux list-windows -t "$ORCH_SESSION" -F "  #{window_index}: #{window_name} (#{pane_current_command})" 2>/dev/null
+  else
+    echo "Orchestra session not running."
+  fi
+}
+
+_kill() {
+  local name="$1"
+  if _has_window "$name"; then
+    tmux kill-window -t "$ORCH_SESSION:$name"
+    echo "Killed window: $name"
+  else
+    echo "No window: $name"
+  fi
+}
+
+_open() {
+  local name="$1"
+  local dir="${PROJECTS[$name]}"
+
+  if [[ -z "$dir" ]]; then
+    echo "Unknown project: $name"
+    echo "Run 'dev list' to see available projects"
+    return 1
+  fi
+
+  if [[ ! -d "$dir" ]]; then
+    echo "Directory not found: $dir"
+    return 1
+  fi
+
+  _ensure_session
+
+  if _has_window "$name"; then
+    if [[ -n "$TMUX" ]]; then
+      tmux select-window -t "$ORCH_SESSION:$name"
+    else
+      tmux attach -t "$ORCH_SESSION:$name"
+    fi
+  else
+    if [[ -n "$TMUX" ]]; then
+      tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+    else
+      tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+      tmux attach -t "$ORCH_SESSION:$name"
+    fi
+  fi
+}
+
+_claude() {
+  local name="$1"
+  local dir="${PROJECTS[$name]}"
+
+  if [[ -z "$dir" ]]; then
+    echo "Unknown project: $name"
+    return 1
+  fi
+
+  cd "$dir" && claude
+}
+
+# Start Claude in a new window within the orchestra session
+_start() {
+  local name="$1"
+  local dir="${PROJECTS[$name]}"
+
+  if [[ -z "$dir" ]]; then
+    echo "Unknown project: $name"
+    return 1
+  fi
+
+  if [[ ! -d "$dir" ]]; then
+    echo "Directory not found: $dir"
+    return 1
+  fi
+
+  _ensure_session
+
+  # If window exists, check if Claude is running
+  if _has_window "$name"; then
+    local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
+    if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+      echo "Already running: $name [claude]"
+      return 0
+    fi
+    # Window exists but no Claude — launch Claude in it
+    tmux send-keys -t "$ORCH_SESSION:$name" "$CLAUDE_BIN --dangerously-skip-permissions" Enter
+    echo "Launched Claude in existing window: $name"
+  else
+    # Enforce session limit
+    local active=$(_claude_count)
+    if [[ $active -ge $MAX_CLAUDE_SESSIONS ]]; then
+      echo "ERROR: Max $MAX_CLAUDE_SESSIONS active Claude sessions reached (current: $active)."
+      echo "Kill one first: dev kill <project>"
+      return 1
+    fi
+
+    tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+    sleep 0.5
+    tmux send-keys -t "$ORCH_SESSION:$name" "$CLAUDE_BIN --dangerously-skip-permissions" Enter
+    echo "Started: $name -> ${dir/$HOME/~}"
+  fi
+
+  # Wait for Claude to be ready (poll for node process, max 15s)
+  local max_wait=15
+  local waited=0
+  while [[ $waited -lt $max_wait ]]; do
+    local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
+    [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && break
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if [[ $waited -ge $max_wait ]]; then
+    echo "WARNING: Claude may not be ready in $name (waited ${max_wait}s)"
+  else
+    # Extra wait for Claude UI to fully init after node process starts
+    sleep 3
+    local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
+    echo "Ready: $name [window $win_index] — switch with Ctrl+A $win_index"
+  fi
+}
+
+# Send a message to a Claude window
+_send() {
+  local name="$1"
+  shift
+  local msg="$*"
+
+  # Validate project alias
+  if [[ -z "${PROJECTS[$name]}" ]]; then
+    echo "Unknown project: $name — run 'dev list'"
+    return 1
+  fi
+
+  if ! _has_window "$name"; then
+    echo "No window for $name — start with: dev start $name"
+    return 1
+  fi
+
+  if [[ -z "$msg" ]]; then
+    echo "Usage: dev send <project> <message>"
+    return 1
+  fi
+
+  # Check that Claude (node) is actually running
+  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+    echo "ERROR: $name is not running Claude (running: $pane_cmd). Start with: dev start $name"
+    return 1
+  fi
+
+  if [[ ${#msg} -gt 1000 ]]; then
+    local tmpfile=$(mktemp)
+    printf '%s' "$msg" > "$tmpfile"
+    tmux load-buffer "$tmpfile"
+    tmux paste-buffer -t "$ORCH_SESSION:$name"
+    rm "$tmpfile"
+    sleep 0.3
+    tmux send-keys -t "$ORCH_SESSION:$name" Enter
+  else
+    tmux send-keys -l -t "$ORCH_SESSION:$name" "$msg"
+    tmux send-keys -t "$ORCH_SESSION:$name" Enter
+  fi
+
+  local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
+  echo "Sent to $name [window $win_index]: ${msg:0:80}$([ ${#msg} -gt 80 ] && echo '...')"
+}
+
+# Show status of all active windows in the orchestra session
+_status() {
+  local found=0
+  echo ""
+  printf "  %-4s %-18s %-12s %s\n" "WIN" "PROJECT" "STATUS" "PATH"
+  printf "  %-4s %-18s %-12s %s\n" "───" "───────" "──────" "────"
+
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}|#{window_name}|#{pane_current_command}" 2>/dev/null)
+    while IFS='|' read -r idx wname pcmd; do
+      found=1
+      local dir="${PROJECTS[$wname]}"
+      [[ -z "$dir" ]] && dir="(orchestrator)"
+      local sess_state="shell"
+      [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && sess_state="claude"
+      printf "  %-4s %-18s %-12s %s\n" "$idx" "$wname" "[$sess_state]" "${dir/$HOME/~}"
+    done <<< "$windows"
+  fi
+
+  [[ $found -eq 0 ]] && echo "  No active sessions. Start with: dev orchestra"
+  echo ""
+  echo "  Claude sessions: $(_claude_count)/$MAX_CLAUDE_SESSIONS"
+  echo ""
+}
+
+# Broadcast message to all active Claude windows only
+_broadcast() {
+  local msg="$*"
+  if [[ -z "$msg" ]]; then
+    echo "Usage: dev broadcast <message>"
+    return 1
+  fi
+
+  local count=0
+  local skipped=0
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
+    while IFS= read -r wname; do
+      [[ "$wname" == "orchestra" ]] && continue
+      local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+        _send "$wname" "$msg"
+        count=$((count + 1))
+        sleep 0.2
+      else
+        skipped=$((skipped + 1))
+      fi
+    done <<< "$windows"
+  fi
+  echo "Broadcast to $count Claude sessions (skipped $skipped non-Claude windows)."
+}
+
+# Start orchestrator: create master session, open Claude in window 0
+_orchestra() {
+  _ensure_session
+
+  if [[ -n "$TMUX" ]]; then
+    tmux switch-client -t "$ORCH_SESSION:orchestra"
+  else
+    tmux attach -t "$ORCH_SESSION:orchestra"
+  fi
+
+  # If orchestra window is just a shell, launch Claude
+  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd $DEV_DIR/orchestra && $CLAUDE_BIN --dangerously-skip-permissions" Enter
+  fi
+}
+
+case "$1" in
+  list|ls)        _list ;;
+  kill)           _kill "$2" ;;
+  claude|cc)      _claude "$2" ;;
+  start)          _start "$2" ;;
+  send)           _send "$2" "${@:3}" ;;
+  status)         _status ;;
+  broadcast)      _broadcast "${@:2}" ;;
+  orchestra|orch) _orchestra ;;
+  help|-h)
+    echo "Usage:"
+    echo "  dev orchestra              Start orchestrator (master session)"
+    echo "  dev start <project>        Start Claude in a window (max $MAX_CLAUDE_SESSIONS)"
+    echo "  dev send <project> <msg>   Send message to project's Claude"
+    echo "  dev broadcast <msg>        Send to all active Claude sessions"
+    echo "  dev status                 Show all windows and their status"
+    echo "  dev list                   List all projects"
+    echo "  dev kill <project>         Kill a project window"
+    echo "  dev cc <project>           Open Claude Code directly in project"
+    echo "  dev <project>              Open project shell in a window"
+    echo "  dev help                   Show this help"
+    ;;
+  *)              _open "$1" ;;
+esac
