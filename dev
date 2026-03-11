@@ -440,6 +440,28 @@ _peek() {
     tail -"$lines"
 }
 
+# Live tail of worker's log file
+_watch() {
+  local name="$1"
+  if [[ -z "$name" ]]; then
+    echo "Usage: dev watch <project>"
+    return 1
+  fi
+
+  local logfile="$LOG_DIR/${name}.log"
+  if [[ ! -f "$logfile" ]]; then
+    echo "No log file for $name — start the worker first: dev start $name"
+    return 1
+  fi
+
+  echo "Watching $name (Ctrl+C to stop)..."
+  tail -f "$logfile" | \
+    sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' | \
+    sed 's/\x1b\][^\x07]*\x07//g' | \
+    tr -d '\xc2\xa0' | \
+    sed 's/[[:cntrl:]]//g'
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -468,6 +490,7 @@ case "$1" in
   broadcast)      _broadcast "${@:2}" ;;
   orchestra|orch) _orchestra ;;
   peek)           _peek "$2" "$3" ;;
+  watch)          _watch "$2" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
@@ -483,6 +506,7 @@ case "$1" in
     echo "  dev list                   List all projects"
     echo "  dev add <alias> <path>     Add a project"
     echo "  dev remove <alias>         Remove a project"
+    echo "  dev watch <project>        Live tail of worker's log"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
