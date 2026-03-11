@@ -716,7 +716,7 @@ case "$1" in
   send)           _send "$2" "${@:3}" ;;
   status)         _status ;;
   broadcast)      _broadcast "${@:2}" ;;
-  orchestra|orch) _orchestra ;;
+  orchestra|orch|o) _orchestra ;;
   peek)           _peek "$2" "$3" ;;
   watch)          _watch "$2" ;;
   history)        _history "$2" "$3" ;;
@@ -730,6 +730,7 @@ case "$1" in
   remove|rm)      _remove "$2" ;;
   help|-h)
     echo "Usage:"
+    echo "  dev                        Start orchestrator (shortcut)"
     echo "  dev orchestra              Start orchestrator (master session)"
     echo "  dev start <project>        Start Claude in a window (max $MAX_CLAUDE_SESSIONS)"
     echo "  dev send <project> <msg>   Send message to project's Claude"
@@ -753,5 +754,6 @@ case "$1" in
     echo "  dev <project>              Open project shell in a window"
     echo "  dev help                   Show this help"
     ;;
+  "")             _orchestra ;;
   *)              _open "$1" ;;
 esac
