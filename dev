@@ -575,6 +575,43 @@ _ask() {
   return 1
 }
 
+# Run a non-interactive task using claude --print
+_run() {
+  local name="$1"
+  shift
+  local msg="$*"
+
+  if [[ -z "$name" || -z "$msg" ]]; then
+    echo "Usage: dev run <project> <task>"
+    return 1
+  fi
+
+  local dir="${PROJECTS[$name]}"
+  if [[ -z "$dir" ]]; then
+    echo "Unknown project: $name"
+    return 1
+  fi
+
+  if [[ ! -d "$dir" ]]; then
+    echo "Directory not found: $dir"
+    return 1
+  fi
+
+  local outfile="$LOG_DIR/${name}-run-$(date +%Y%m%d-%H%M%S).log"
+  mkdir -p "$LOG_DIR"
+
+  _log_history "RUN $name: ${msg:0:200}"
+  echo "Running task in $name (non-interactive)..."
+  echo "Output: $outfile"
+
+  (cd "$dir" && $CLAUDE_BIN --print "$msg" > "$outfile" 2>&1; \
+    _notify "$name" "Task finished"; \
+    _log_history "RUN-DONE $name") &
+
+  echo "Task running in background (PID: $!)"
+  echo "Check output: cat $outfile"
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -607,6 +644,7 @@ case "$1" in
   history)        _history "$2" "$3" ;;
   wait)           _wait "$2" "$3" ;;
   ask)            _ask "$2" "${@:3}" ;;
+  run)            _run "$2" "${@:3}" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
@@ -626,6 +664,7 @@ case "$1" in
     echo "  dev history [alias] [n]    Show recent task history"
     echo "  dev wait <project> [sec]   Wait for worker to finish, then notify"
     echo "  dev ask <project> <msg>    Send question, wait for response, show it"
+    echo "  dev run <project> <task>   Run non-interactive task (claude --print)"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
