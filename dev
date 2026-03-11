@@ -15,6 +15,13 @@ MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-3}"
 # Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
+HISTORY_FILE="${HOME}/.local/share/orchestra/history.log"
+
+# Log an action to history file
+_log_history() {
+  mkdir -p "$(dirname "$HISTORY_FILE")"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$HISTORY_FILE"
+}
 
 # macOS notification helper
 _notify() {
@@ -312,6 +319,7 @@ _start() {
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
+    _log_history "START $name [window $win_index]"
     echo "Ready: $name [window $win_index] — switch with Ctrl+A $win_index"
   fi
 }
@@ -358,6 +366,7 @@ _send() {
     tmux send-keys -t "$ORCH_SESSION:$name" Enter
   fi
 
+  _log_history "SEND $name: ${msg:0:200}"
   local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
   echo "Sent to $name [window $win_index]: ${msg:0:80}$([ ${#msg} -gt 80 ] && echo '...')"
 }
@@ -429,6 +438,8 @@ _peek() {
     return 1
   fi
 
+  _log_history "PEEK $name"
+
   # Capture pane content and strip ANSI/TUI garbage
   # (capture-pane is cleaner than pipe-pane logs for reading)
   tmux capture-pane -t "$ORCH_SESSION:$name" -p -S "-$lines" | \
@@ -462,6 +473,23 @@ _watch() {
     sed 's/[[:cntrl:]]//g'
 }
 
+# Show task history
+_history() {
+  local filter="$1"
+  local lines="${2:-30}"
+
+  if [[ ! -f "$HISTORY_FILE" ]]; then
+    echo "No history yet."
+    return 0
+  fi
+
+  if [[ -n "$filter" ]]; then
+    grep -i "$filter" "$HISTORY_FILE" | tail -"$lines"
+  else
+    tail -"$lines" "$HISTORY_FILE"
+  fi
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -491,6 +519,7 @@ case "$1" in
   orchestra|orch) _orchestra ;;
   peek)           _peek "$2" "$3" ;;
   watch)          _watch "$2" ;;
+  history)        _history "$2" "$3" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
@@ -507,6 +536,7 @@ case "$1" in
     echo "  dev add <alias> <path>     Add a project"
     echo "  dev remove <alias>         Remove a project"
     echo "  dev watch <project>        Live tail of worker's log"
+    echo "  dev history [alias] [n]    Show recent task history"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
