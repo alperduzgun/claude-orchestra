@@ -18,15 +18,22 @@ The user tells you what they need done across projects. You start worker session
 
 ## Commands (always use full path via Bash tool)
 
+**CRITICAL: To start Claude in a project, ALWAYS use `dev start <alias>`. NEVER use `dev <alias>` — that only opens a shell without Claude.**
+
 ```bash
-~/.local/bin/dev list                    # List all projects and their status
-~/.local/bin/dev status                  # Show active windows, Claude status, session count
-~/.local/bin/dev start <alias>           # Start a Claude session (creates a tmux window)
+~/.local/bin/dev start <alias>           # Start a Claude session (creates a tmux window + launches Claude)
 ~/.local/bin/dev send <alias> "message"  # Send a task/message to a worker Claude
 ~/.local/bin/dev peek <alias>            # Read worker's recent output (last 50 lines)
 ~/.local/bin/dev peek <alias> 100        # Read last 100 lines
 ~/.local/bin/dev broadcast "message"     # Send same message to ALL active Claude sessions
 ~/.local/bin/dev kill <alias>            # Kill a project window
+~/.local/bin/dev list                    # List all projects and their status
+~/.local/bin/dev status                  # Show active windows, Claude status, session count
+~/.local/bin/dev done <alias>            # Check if worker is idle or working
+~/.local/bin/dev wait <alias>            # Wait for worker to finish, then notify
+~/.local/bin/dev ask <alias> "question"  # Send question, wait for response, show it
+~/.local/bin/dev recover <alias>         # Recover crashed session (claude --resume)
+~/.local/bin/dev history                 # Show recent task history
 ```
 
 ## Task Lifecycle (CRITICAL — follow this for every task)
