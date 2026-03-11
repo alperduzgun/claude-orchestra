@@ -27,6 +27,10 @@ cp "$ORCH_DIR/dev" "$INSTALL_DIR/dev"
 chmod +x "$INSTALL_DIR/dev"
 echo "Installed: $INSTALL_DIR/dev"
 
+cp "$ORCH_DIR/orchestra-status.sh" "$INSTALL_DIR/orchestra-status"
+chmod +x "$INSTALL_DIR/orchestra-status"
+echo "Installed: $INSTALL_DIR/orchestra-status"
+
 # Create config dir
 mkdir -p "$CONFIG_DIR"
 if [[ ! -f "$CONFIG_DIR/projects.conf" ]]; then
