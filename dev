@@ -5,44 +5,88 @@
 # Clear nested Claude Code detection
 unset CLAUDECODE
 
-DEV_DIR="$HOME/Development"
-PERSONAL_DIR="$DEV_DIR/Personal"
-CLAUDE_BIN="$HOME/.local/bin/claude"
-ORCH_SESSION="devenv"
-MAX_CLAUDE_SESSIONS=3
+# Config
+CONFIG_DIR="${ORCHESTRA_CONFIG_DIR:-$HOME/.config/orchestra}"
+PROJECTS_FILE="$CONFIG_DIR/projects.conf"
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
+ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
+ORCH_DIR="${ORCHESTRA_DIR:-$HOME/Development/orchestra}"
+MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-3}"
 # Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 
+# Load projects from config file
 typeset -A PROJECTS
-# Top-level
-PROJECTS[warden]="$DEV_DIR/warden-panel"
-PROJECTS[toptantr]="$DEV_DIR/toptantr-ios-master"
-PROJECTS[adaptive]="$DEV_DIR/adaptive_platform_ui_temp"
-PROJECTS[commerce]="$DEV_DIR/CommerceMinder"
-PROJECTS[devkit]="$DEV_DIR/DevKit"
-# Personal - Flutter
-PROJECTS[oml]="$PERSONAL_DIR/OhMyLove"
-PROJECTS[daisy]="$PERSONAL_DIR/daisy-boilerplate"
-PROJECTS[terapizy]="$PERSONAL_DIR/terapizy-mobile"
-PROJECTS[interpress]="$PERSONAL_DIR/interpress-mobile-v5"
-PROJECTS[invoice]="$PERSONAL_DIR/invoice-main"
-PROJECTS[expathy]="$PERSONAL_DIR/expathy_apps-master"
-PROJECTS[binance]="$PERSONAL_DIR/binance_dart_tirtik_bot"
-PROJECTS[seller]="$PERSONAL_DIR/flutter-seller-app"
-PROJECTS[voivi]="$PERSONAL_DIR/voivi_flutter_voice_ai"
-PROJECTS[sphere]="$PERSONAL_DIR/dynamic_sphere_visualizer"
-PROJECTS[winzip]="$PERSONAL_DIR/flutter_winzipper_desktop_app"
-PROJECTS[theme]="$PERSONAL_DIR/flutter_theme_builder"
-PROJECTS[fmcp]="$PERSONAL_DIR/flutter_mcp"
-PROJECTS[mcpserver]="$PERSONAL_DIR/FlutterMcpServer"
-# Personal - Node/Python
-PROJECTS[aso]="$PERSONAL_DIR/aso-tracker"
-PROJECTS[callcenter]="$PERSONAL_DIR/AgentCallCenter"
-PROJECTS[wcore]="$PERSONAL_DIR/warden-core"
-PROJECTS[freemcp]="$PERSONAL_DIR/freemcp.space-backend"
-PROJECTS[appstore-mcp]="$PERSONAL_DIR/appnova-appstore-mcp"
-PROJECTS[marketing-mcp]="$PERSONAL_DIR/appnova-marketing-mcp"
-PROJECTS[searchads-mcp]="$PERSONAL_DIR/appnova-searchads-mcp"
+_load_projects() {
+  if [[ ! -f "$PROJECTS_FILE" ]]; then
+    echo "No projects configured. Run: dev add <alias> /path/to/project"
+    echo "Config: $PROJECTS_FILE"
+    return 1
+  fi
+  while IFS='=' read -r key val; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    key="${key## }"; key="${key%% }"
+    val="${val## }"; val="${val%% }"
+    # Expand ~ and $HOME
+    val="${val/#\~/$HOME}"
+    val="${val/\$HOME/$HOME}"
+    PROJECTS[$key]="$val"
+  done < "$PROJECTS_FILE"
+}
+
+_load_projects
+
+# Add a project to config
+_add() {
+  local alias="$1"
+  local dir="$2"
+
+  if [[ -z "$alias" || -z "$dir" ]]; then
+    echo "Usage: dev add <alias> /path/to/project"
+    return 1
+  fi
+
+  # Resolve to absolute path
+  dir="${dir/#\~/$HOME}"
+  [[ ! "$dir" = /* ]] && dir="$(cd "$dir" 2>/dev/null && pwd)"
+
+  if [[ ! -d "$dir" ]]; then
+    echo "Directory not found: $dir"
+    return 1
+  fi
+
+  if [[ -n "${PROJECTS[$alias]}" ]]; then
+    echo "Alias '$alias' already exists: ${PROJECTS[$alias]}"
+    echo "Remove first with: dev remove $alias"
+    return 1
+  fi
+
+  mkdir -p "$CONFIG_DIR"
+  echo "$alias=$dir" >> "$PROJECTS_FILE"
+  PROJECTS[$alias]="$dir"
+  echo "Added: $alias -> $dir"
+}
+
+# Remove a project from config
+_remove() {
+  local alias="$1"
+  if [[ -z "$alias" ]]; then
+    echo "Usage: dev remove <alias>"
+    return 1
+  fi
+
+  if [[ -z "${PROJECTS[$alias]}" ]]; then
+    echo "Unknown project: $alias"
+    return 1
+  fi
+
+  # Remove line from config
+  local tmpfile=$(mktemp)
+  grep -v "^$alias=" "$PROJECTS_FILE" > "$tmpfile"
+  mv "$tmpfile" "$PROJECTS_FILE"
+  unset "PROJECTS[$alias]"
+  echo "Removed: $alias"
+}
 
 # Helper: count active Claude windows in the orchestra session
 _claude_count() {
@@ -66,11 +110,16 @@ _has_window() {
 # Helper: ensure the orchestra tmux session exists
 _ensure_session() {
   if ! tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$ORCH_SESSION" -n "orchestra" -c "$DEV_DIR/orchestra"
+    tmux new-session -d -s "$ORCH_SESSION" -n "orchestra" -c "$ORCH_DIR"
   fi
 }
 
 _list() {
+  if [[ ${#PROJECTS} -eq 0 ]]; then
+    echo "No projects configured."
+    echo "Add one with: dev add <alias> /path/to/project"
+    return
+  fi
   echo "Available projects:"
   echo ""
   printf "  %-18s %-40s %s\n" "ALIAS" "PATH" "STATUS"
@@ -131,10 +180,8 @@ _open() {
       tmux attach -t "$ORCH_SESSION:$name"
     fi
   else
-    if [[ -n "$TMUX" ]]; then
-      tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
-    else
-      tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+    tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+    if [[ -z "$TMUX" ]]; then
       tmux attach -t "$ORCH_SESSION:$name"
     fi
   fi
@@ -194,7 +241,7 @@ _start() {
     echo "Started: $name -> ${dir/$HOME/~}"
   fi
 
-  # Wait for Claude to be ready (poll for node process, max 15s)
+  # Wait for Claude to be ready (poll for process, max 15s)
   local max_wait=15
   local waited=0
   while [[ $waited -lt $max_wait ]]; do
@@ -207,7 +254,6 @@ _start() {
   if [[ $waited -ge $max_wait ]]; then
     echo "WARNING: Claude may not be ready in $name (waited ${max_wait}s)"
   else
-    # Extra wait for Claude UI to fully init after node process starts
     sleep 3
     local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
     echo "Ready: $name [window $win_index] — switch with Ctrl+A $win_index"
@@ -236,7 +282,7 @@ _send() {
     return 1
   fi
 
-  # Check that Claude (node) is actually running
+  # Check that Claude is actually running
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
   if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
     echo "ERROR: $name is not running Claude (running: $pane_cmd). Start with: dev start $name"
@@ -325,7 +371,7 @@ _orchestra() {
   # If orchestra window is just a shell, launch Claude
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
   if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd $DEV_DIR/orchestra && $CLAUDE_BIN --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd $ORCH_DIR && $CLAUDE_BIN --dangerously-skip-permissions" Enter
   fi
 }
 
@@ -338,6 +384,8 @@ case "$1" in
   status)         _status ;;
   broadcast)      _broadcast "${@:2}" ;;
   orchestra|orch) _orchestra ;;
+  add)            _add "$2" "$3" ;;
+  remove|rm)      _remove "$2" ;;
   help|-h)
     echo "Usage:"
     echo "  dev orchestra              Start orchestrator (master session)"
@@ -346,6 +394,8 @@ case "$1" in
     echo "  dev broadcast <msg>        Send to all active Claude sessions"
     echo "  dev status                 Show all windows and their status"
     echo "  dev list                   List all projects"
+    echo "  dev add <alias> <path>     Add a project"
+    echo "  dev remove <alias>         Remove a project"
     echo "  dev kill <project>         Kill a project window"
     echo "  dev cc <project>           Open Claude Code directly in project"
     echo "  dev <project>              Open project shell in a window"
