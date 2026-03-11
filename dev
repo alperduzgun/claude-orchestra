@@ -14,6 +14,16 @@ ORCH_DIR="${ORCHESTRA_DIR:-$HOME/Development/orchestra}"
 MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-3}"
 # Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
+LOG_DIR="${HOME}/.local/share/orchestra/logs"
+
+# macOS notification helper
+_notify() {
+  local title="${1:-Orchestra}"
+  local msg="${2:-Task complete}"
+  if command -v osascript &>/dev/null; then
+    osascript -e "display notification \"$msg\" with title \"🎵 $title\"" 2>/dev/null
+  fi
+}
 
 # Load projects from config file
 typeset -A PROJECTS
@@ -411,6 +421,7 @@ case "$1" in
   broadcast)      _broadcast "${@:2}" ;;
   orchestra|orch) _orchestra ;;
   peek)           _peek "$2" "$3" ;;
+  notify)         _notify "$2" "${@:3}" ;;
   add)            _add "$2" "$3" ;;
   remove|rm)      _remove "$2" ;;
   help|-h)
@@ -424,6 +435,7 @@ case "$1" in
     echo "  dev list                   List all projects"
     echo "  dev add <alias> <path>     Add a project"
     echo "  dev remove <alias>         Remove a project"
+    echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
     echo "  dev cc <project>           Open Claude Code directly in project"
     echo "  dev <project>              Open project shell in a window"
