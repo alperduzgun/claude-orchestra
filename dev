@@ -308,6 +308,9 @@ _start() {
     echo "WARNING: Claude may not be ready in $name (waited ${max_wait}s)"
   else
     sleep 3
+    # Enable pipe-pane logging
+    mkdir -p "$LOG_DIR"
+    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
     echo "Ready: $name [window $win_index] — switch with Ctrl+A $win_index"
   fi
@@ -427,6 +430,7 @@ _peek() {
   fi
 
   # Capture pane content and strip ANSI/TUI garbage
+  # (capture-pane is cleaner than pipe-pane logs for reading)
   tmux capture-pane -t "$ORCH_SESSION:$name" -p -S "-$lines" | \
     sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
     sed 's/\x1b\][^\x07]*\x07//g' | \
