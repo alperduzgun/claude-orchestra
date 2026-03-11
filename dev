@@ -1,16 +1,25 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # Dev - Project launcher & Claude Code orchestrator
 # Usage: dev <project> | dev list | dev start <project> | dev send <project> "msg"
+# Requires: zsh, tmux, Claude Code (https://docs.anthropic.com/en/docs/claude-code)
 
 # Clear nested Claude Code detection
 unset CLAUDECODE
+
+# Dependency check
+if ! command -v tmux &>/dev/null; then
+  echo "ERROR: tmux is required but not found. Install it first."
+  exit 1
+fi
 
 # Config
 CONFIG_DIR="${ORCHESTRA_CONFIG_DIR:-$HOME/.config/orchestra}"
 PROJECTS_FILE="$CONFIG_DIR/projects.conf"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
-ORCH_DIR="${ORCHESTRA_DIR:-$HOME/Development/orchestra}"
+# ORCH_DIR: where CLAUDE.md lives for orchestrator mode
+# Override with ORCHESTRA_DIR env var or set in ~/.config/orchestra/orchestra.conf
+ORCH_DIR="${ORCHESTRA_DIR:-$HOME/.config/orchestra}"
 MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-3}"
 # Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
@@ -23,12 +32,14 @@ _log_history() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$HISTORY_FILE"
 }
 
-# macOS notification helper
+# Desktop notification helper (macOS + Linux)
 _notify() {
   local title="${1:-Orchestra}"
   local msg="${2:-Task complete}"
   if command -v osascript &>/dev/null; then
-    osascript -e "display notification \"$msg\" with title \"🎵 $title\"" 2>/dev/null
+    osascript -e "display notification \"$msg\" with title \"$title\"" 2>/dev/null
+  elif command -v notify-send &>/dev/null; then
+    notify-send "$title" "$msg" 2>/dev/null
   fi
 }
 
@@ -99,7 +110,7 @@ _remove() {
 
   # Remove line from config
   local tmpfile=$(mktemp)
-  grep -v "^$alias=" "$PROJECTS_FILE" > "$tmpfile"
+  grep -vF "$alias=" "$PROJECTS_FILE" > "$tmpfile"
   mv "$tmpfile" "$PROJECTS_FILE"
   unset "PROJECTS[$alias]"
   echo "Removed: $alias"
@@ -604,7 +615,7 @@ _run() {
   echo "Running task in $name (non-interactive)..."
   echo "Output: $outfile"
 
-  (cd "$dir" && $CLAUDE_BIN --print "$msg" > "$outfile" 2>&1; \
+  (cd "$dir" && "$CLAUDE_BIN" --print "$msg" > "$outfile" 2>&1; \
     _notify "$name" "Task finished"; \
     _log_history "RUN-DONE $name") &
 
@@ -686,7 +697,7 @@ _orchestra() {
   # Launch Claude BEFORE attaching (attach is blocking)
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
   if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd $ORCH_DIR && $CLAUDE_BIN --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd \"$ORCH_DIR\" && \"$CLAUDE_BIN\" --dangerously-skip-permissions" Enter
   fi
 
   # Now attach/switch (blocking — nothing runs after this until detach)

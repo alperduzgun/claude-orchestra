@@ -23,6 +23,15 @@ if ! command -v claude &>/dev/null && [[ ! -f "$HOME/.local/bin/claude" ]]; then
   echo "WARNING: Claude Code not found. Install it first: https://docs.anthropic.com/en/docs/claude-code"
 fi
 
+# Verify source files exist
+for f in dev orchestra-status.sh orchestra-attach.sh projects.example.conf CLAUDE.md; do
+  if [[ ! -f "$ORCH_DIR/$f" ]]; then
+    echo "ERROR: Missing file: $ORCH_DIR/$f"
+    echo "Make sure you're running install.sh from the claude-orchestra repo directory."
+    exit 1
+  fi
+done
+
 # Install scripts
 mkdir -p "$INSTALL_DIR"
 
@@ -38,18 +47,18 @@ cp "$ORCH_DIR/orchestra-attach.sh" "$INSTALL_DIR/orchestra-attach"
 chmod +x "$INSTALL_DIR/orchestra-attach"
 echo "Installed: $INSTALL_DIR/orchestra-attach"
 
-# Create config dir
+# Create config dir and copy orchestrator prompt
 mkdir -p "$CONFIG_DIR"
+
+cp "$ORCH_DIR/CLAUDE.md" "$CONFIG_DIR/CLAUDE.md"
+echo "Installed: $CONFIG_DIR/CLAUDE.md (orchestrator prompt)"
+
 if [[ ! -f "$CONFIG_DIR/projects.conf" ]]; then
   cp "$ORCH_DIR/projects.example.conf" "$CONFIG_DIR/projects.conf"
   echo "Created: $CONFIG_DIR/projects.conf"
 else
   echo "Config exists: $CONFIG_DIR/projects.conf (not overwritten)"
 fi
-
-# Copy CLAUDE.md for orchestrator mode
-mkdir -p "$ORCH_DIR"
-echo "Orchestrator dir: $ORCH_DIR"
 
 # Check PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
@@ -63,12 +72,14 @@ echo "Setup complete!"
 echo ""
 
 # --- Optional: Ghostty session restore ---
-echo "--- Optional: Ghostty Auto-Restore ---"
-echo ""
-echo "Automatically reattach to your orchestra session when Ghostty opens."
-echo ""
-
 GHOSTTY_CONFIGURED=false
+if command -v ghostty &>/dev/null || [[ -d "/Applications/Ghostty.app" ]] || [[ -f "$GHOSTTY_CONFIG" ]]; then
+  echo "--- Optional: Ghostty Auto-Restore ---"
+  echo ""
+  echo "Automatically reattach to your orchestra session when Ghostty opens."
+  echo ""
+fi
+
 if [[ -f "$GHOSTTY_CONFIG" ]]; then
   if grep -q "initial-command" "$GHOSTTY_CONFIG" 2>/dev/null; then
     echo "Ghostty: initial-command already set (skipping)"

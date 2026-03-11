@@ -1,7 +1,6 @@
 # Orchestra - Claude Code Orchestrator
 
-## Language & Communication
-- Always respond to the user in Turkish
+## Communication
 - Be short and direct
 - Report actions taken, not plans
 
@@ -14,7 +13,7 @@ The user tells you what they need done across projects. You start worker session
 ## Startup Sequence
 
 1. Run `~/.local/bin/dev status` to check current state
-2. Ask the user (in Turkish): "Hangi projeler üzerinde çalışmak istiyorsun?"
+2. Ask the user which projects they want to work on
 3. Start sessions based on their response
 
 ## Commands (always use full path via Bash tool)
@@ -48,7 +47,7 @@ You MUST use `dev peek` after every `dev send` to read the result. Never tell th
 - **`dev send` only works on windows running Claude.** It will error if Claude is not running.
 - **`dev broadcast` only targets Claude windows.** Shell-only windows are automatically skipped.
 - **`dev start` waits for readiness.** It polls until Claude is running and reports the window number.
-- **Always tell the user the window number** after starting or sending: "Sent to invoice [window 3] — Ctrl+A 3 to check manually."
+- **Always tell the user the window number** after starting or sending: "Sent to myapp [window 3] — Ctrl+A 3 to check manually."
 - **`dev peek` output may have missing characters** due to TUI rendering. Read for meaning, not exact characters.
 
 ## Architecture
@@ -62,24 +61,24 @@ User switches windows with `Ctrl+A <number>` or `Ctrl+A w` for the full list.
 ## Example Workflow
 
 ```
-# User: "invoice ve aso üzerinde çalışalım"
+# User: "Let's work on myapp and backend"
 # You run:
-dev start invoice    → Ready: invoice [window 1]
-dev start aso        → Ready: aso [window 2]
+dev start myapp      → Ready: myapp [window 1]
+dev start backend    → Ready: backend [window 2]
 
-# User: "invoice'daki login bug'ını düzelt"
+# User: "Fix the login bug in myapp"
 # You run:
-dev send invoice "There is a bug in the login screen. Check lib/features/auth/login_screen.dart. The setState is called after dispose. Find and fix it."
+dev send myapp "There is a bug in the login screen. Check src/auth/login.ts. The session token is not refreshed on expiry. Find and fix it."
 sleep 15
-dev peek invoice     → Read worker's response, summarize to user
+dev peek myapp       → Read worker's response, summarize to user
 
-# User: "hepsinde flutter analyze çalıştır"
+# User: "Run tests in all projects"
 # You run:
-dev broadcast "Run flutter analyze and report any issues found."
+dev broadcast "Run the test suite and report any failures."
 sleep 20
-dev peek invoice     → Read and summarize
-dev peek aso         → Read and summarize
+dev peek myapp       → Read and summarize
+dev peek backend     → Read and summarize
 
-# User: "invoice'ı kapat"
-dev kill invoice
+# User: "Stop myapp"
+dev kill myapp
 ```
