@@ -490,6 +490,47 @@ _history() {
   fi
 }
 
+# Wait for a worker to finish, then notify
+_wait() {
+  local name="$1"
+  local max_wait="${2:-300}"  # default 5 minutes
+
+  if [[ -z "$name" ]]; then
+    echo "Usage: dev wait <project> [timeout_seconds]"
+    return 1
+  fi
+
+  if ! _has_window "$name"; then
+    echo "No window for $name"
+    return 1
+  fi
+
+  echo "Waiting for $name to finish (max ${max_wait}s)..."
+  local waited=0
+  local start_time=$(date +%s)
+
+  while [[ $waited -lt $max_wait ]]; do
+    _is_done "$name"
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+      local elapsed=$(($(date +%s) - start_time))
+      _log_history "DONE $name (${elapsed}s)"
+      _notify "$name" "Task complete (${elapsed}s)"
+      echo "$name: done (${elapsed}s)"
+      return 0
+    elif [[ $result -eq 2 ]]; then
+      echo "$name: Claude not running"
+      return 2
+    fi
+    sleep 3
+    waited=$((waited + 3))
+  done
+
+  _notify "$name" "Timed out after ${max_wait}s"
+  echo "$name: timed out after ${max_wait}s"
+  return 1
+}
+
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
   _ensure_session
@@ -520,6 +561,7 @@ case "$1" in
   peek)           _peek "$2" "$3" ;;
   watch)          _watch "$2" ;;
   history)        _history "$2" "$3" ;;
+  wait)           _wait "$2" "$3" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
@@ -537,6 +579,7 @@ case "$1" in
     echo "  dev remove <alias>         Remove a project"
     echo "  dev watch <project>        Live tail of worker's log"
     echo "  dev history [alias] [n]    Show recent task history"
+    echo "  dev wait <project> [sec]   Wait for worker to finish, then notify"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a macOS notification"
     echo "  dev kill <project>         Kill a project window"
