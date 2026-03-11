@@ -362,16 +362,17 @@ _broadcast() {
 _orchestra() {
   _ensure_session
 
+  # Launch Claude BEFORE attaching (attach is blocking)
+  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd $ORCH_DIR && $CLAUDE_BIN --dangerously-skip-permissions" Enter
+  fi
+
+  # Now attach/switch (blocking — nothing runs after this until detach)
   if [[ -n "$TMUX" ]]; then
     tmux switch-client -t "$ORCH_SESSION:orchestra"
   else
     tmux attach -t "$ORCH_SESSION:orchestra"
-  fi
-
-  # If orchestra window is just a shell, launch Claude
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd $ORCH_DIR && $CLAUDE_BIN --dangerously-skip-permissions" Enter
   fi
 }
 
