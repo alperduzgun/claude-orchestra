@@ -5,6 +5,10 @@
 # Usage: Set in Ghostty config:
 #   initial-command = ~/.local/bin/orchestra-attach
 
+# Source login profile for PATH (homebrew, fvm, etc.)
+[[ -f ~/.zprofile ]] && source ~/.zprofile
+[[ -f ~/.zshrc ]] && source ~/.zshrc
+
 ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
 
 # Try to reattach to existing session
