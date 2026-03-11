@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # Orchestra status for tmux status bar
 # Shows active workers with status indicators
 

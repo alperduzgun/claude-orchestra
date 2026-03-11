@@ -75,12 +75,15 @@ dev list                 # All projects and their status
 
 ### Navigation
 
-| Key | Action |
-|-----|--------|
-| `Cmd+0` | Switch to orchestrator (Ghostty) |
-| `Cmd+1` | Switch to first project (Ghostty) |
-| `Cmd+2` | Switch to second project (Ghostty) |
-| `Ctrl+A w` | List all windows |
+| Key | Action | Requires |
+|-----|--------|----------|
+| `Ctrl+A 0` | Switch to orchestrator | tmux (default) |
+| `Ctrl+A 1` | Switch to first project | tmux (default) |
+| `Ctrl+A w` | List all windows | tmux (default) |
+| `Cmd+0` | Switch to orchestrator | Ghostty + keybindings |
+| `Cmd+1` | Switch to first project | Ghostty + keybindings |
+
+> **Note:** `Cmd+number` keybindings require the Ghostty config from `ghostty.example.conf` and tmux prefix set to `Ctrl+A`. See the example config for details.
 
 ### Monitoring & Automation
 
