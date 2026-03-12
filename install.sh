@@ -24,7 +24,7 @@ if ! command -v claude &>/dev/null && [[ ! -f "$HOME/.local/bin/claude" ]]; then
 fi
 
 # Verify source files exist
-for f in dev orchestra-status.sh orchestra-attach.sh projects.example.conf CLAUDE.md; do
+for f in dev orchestra-status.sh orchestra-attach.sh projects.example.conf CLAUDE.md ghostty.example.conf; do
   if [[ ! -f "$ORCH_DIR/$f" ]]; then
     echo "ERROR: Missing file: $ORCH_DIR/$f"
     echo "Make sure you're running install.sh from the claude-orchestra repo directory."
@@ -101,6 +101,54 @@ else
   echo "Ghostty config not found at $GHOSTTY_CONFIG"
   echo "To enable manually, add to your Ghostty config:"
   echo "  initial-command = $INSTALL_DIR/orchestra-attach"
+fi
+
+# --- Optional: Ghostty Cmd+number keybindings ---
+echo ""
+if [[ -f "$GHOSTTY_CONFIG" ]]; then
+  if grep -q "super+1=text" "$GHOSTTY_CONFIG" 2>/dev/null; then
+    echo "Ghostty: Cmd+number keybindings already set (skipping)"
+  else
+    echo "--- Optional: Ghostty Cmd+Number Window Switching ---"
+    echo ""
+    echo "Switch between orchestrator and workers with Cmd+0, Cmd+1, Cmd+2..."
+    echo "Requires tmux prefix Ctrl+A (default is Ctrl+B)."
+    echo ""
+    read -p "Add Cmd+number keybindings to Ghostty? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      echo "" >> "$GHOSTTY_CONFIG"
+      cat "$ORCH_DIR/ghostty.example.conf" >> "$GHOSTTY_CONFIG"
+      echo "Ghostty: Cmd+number keybindings added"
+    else
+      echo "Ghostty: keybindings skipped (see ghostty.example.conf)"
+    fi
+  fi
+fi
+
+# --- Optional: tmux status bar with worker indicators ---
+echo ""
+if [[ -f "$TMUX_CONFIG" ]]; then
+  if grep -q "orchestra-status" "$TMUX_CONFIG" 2>/dev/null; then
+    echo "tmux: orchestra-status already in status bar (skipping)"
+  else
+    echo "--- Optional: tmux Status Bar ---"
+    echo ""
+    echo "Show live worker status in tmux status bar (⚡working / ✓idle)."
+    echo ""
+    read -p "Add worker status to tmux status bar? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      echo "" >> "$TMUX_CONFIG"
+      echo "# Orchestra: live worker status in status bar" >> "$TMUX_CONFIG"
+      echo "set -g status-right \"#($INSTALL_DIR/orchestra-status)#[fg=#a6adc8] %H:%M \"" >> "$TMUX_CONFIG"
+      echo "set -g status-right-length 80" >> "$TMUX_CONFIG"
+      echo "set -g status-interval 5" >> "$TMUX_CONFIG"
+      echo "tmux: worker status bar enabled"
+    else
+      echo "tmux: status bar skipped"
+    fi
+  fi
 fi
 
 # --- Optional: tmux window-size fix ---

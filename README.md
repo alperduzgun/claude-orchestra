@@ -92,7 +92,9 @@ The installer will:
 2. Copy the orchestrator prompt (`CLAUDE.md`) to `~/.config/orchestra/`
 3. Create config at `~/.config/orchestra/projects.conf`
 4. **Ask** if you want Ghostty auto-restore (adds `initial-command` to Ghostty config)
-5. **Ask** if you want tmux multi-client fix (adds `window-size latest` to tmux.conf)
+5. **Ask** if you want Ghostty Cmd+number keybindings (switch windows with Cmd+0, Cmd+1...)
+6. **Ask** if you want tmux status bar with live worker indicators (⚡working / ✓idle)
+7. **Ask** if you want tmux multi-client fix (adds `window-size latest` to tmux.conf)
 
 ## Setup
 
