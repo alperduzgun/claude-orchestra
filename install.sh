@@ -24,7 +24,7 @@ if ! command -v claude &>/dev/null && [[ ! -f "$HOME/.local/bin/claude" ]]; then
 fi
 
 # Verify source files exist
-for f in dev orchestra-status.sh orchestra-attach.sh projects.example.conf CLAUDE.md ghostty.example.conf; do
+for f in dev orchestra-status.sh orchestra-attach.sh projects.example.conf CLAUDE.md ghostty.example.conf tmux.example.conf; do
   if [[ ! -f "$ORCH_DIR/$f" ]]; then
     echo "ERROR: Missing file: $ORCH_DIR/$f"
     echo "Make sure you're running install.sh from the claude-orchestra repo directory."
@@ -126,52 +126,38 @@ if [[ -f "$GHOSTTY_CONFIG" ]]; then
   fi
 fi
 
-# --- Optional: tmux status bar with worker indicators ---
+# --- Optional: tmux configuration (theme + status bar + keybindings) ---
+echo ""
+echo "--- Optional: tmux Configuration ---"
+echo ""
+echo "Install orchestra tmux config: Catppuccin Mocha theme, Ctrl+A prefix,"
+echo "vim-style navigation, orchestra worker status bar, and sensible defaults."
 echo ""
 if [[ -f "$TMUX_CONFIG" ]]; then
   if grep -q "orchestra-status" "$TMUX_CONFIG" 2>/dev/null; then
-    echo "tmux: orchestra-status already in status bar (skipping)"
+    echo "tmux: orchestra config already present (skipping)"
   else
-    echo "--- Optional: tmux Status Bar ---"
-    echo ""
-    echo "Show live worker status in tmux status bar (⚡working / ✓idle)."
-    echo ""
-    read -p "Add worker status to tmux status bar? (y/N) " -n 1 -r
+    echo "WARNING: Existing ~/.tmux.conf will be backed up before changes."
+    read -p "Install orchestra tmux config? (y/N) " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-      echo "" >> "$TMUX_CONFIG"
-      echo "# Orchestra: live worker status in status bar" >> "$TMUX_CONFIG"
-      echo "set -g status-right \"#($INSTALL_DIR/orchestra-status)#[fg=#a6adc8] %H:%M \"" >> "$TMUX_CONFIG"
-      echo "set -g status-right-length 80" >> "$TMUX_CONFIG"
-      echo "set -g status-interval 5" >> "$TMUX_CONFIG"
-      echo "tmux: worker status bar enabled"
+      cp "$TMUX_CONFIG" "${TMUX_CONFIG}.backup.$(date +%s)"
+      echo "tmux: backed up existing config"
+      cp "$ORCH_DIR/tmux.example.conf" "$TMUX_CONFIG"
+      echo "tmux: orchestra config installed"
     else
-      echo "tmux: status bar skipped"
-    fi
-  fi
-fi
-
-# --- Optional: tmux window-size fix ---
-echo ""
-if [[ -f "$TMUX_CONFIG" ]]; then
-  if grep -q "window-size" "$TMUX_CONFIG" 2>/dev/null; then
-    echo "tmux: window-size already configured (skipping)"
-  else
-    read -p "Fix tmux window-size for multi-client? (y/N) " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-      echo "" >> "$TMUX_CONFIG"
-      echo "# Use latest client size (prevents smallest-window constraint)" >> "$TMUX_CONFIG"
-      echo "set -g window-size latest" >> "$TMUX_CONFIG"
-      echo "tmux: window-size set to latest"
-    else
-      echo "tmux: skipped"
+      echo "tmux: skipped (see tmux.example.conf for reference)"
     fi
   fi
 else
-  echo "tmux config not found at $TMUX_CONFIG"
-  echo "To fix manually, add to your ~/.tmux.conf:"
-  echo "  set -g window-size latest"
+  read -p "Create ~/.tmux.conf with orchestra config? (y/N) " -n 1 -r
+  echo ""
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    cp "$ORCH_DIR/tmux.example.conf" "$TMUX_CONFIG"
+    echo "tmux: orchestra config created"
+  else
+    echo "tmux: skipped (see tmux.example.conf for reference)"
+  fi
 fi
 
 echo ""
