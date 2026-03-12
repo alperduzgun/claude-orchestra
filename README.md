@@ -53,6 +53,23 @@ Ghostty / Terminal
 - Max 3 concurrent Claude sessions (configurable, RAM-dependent)
 - Close Ghostty and reopen — session resumes where you left off
 
+### Prompt Amplification
+
+The orchestrator doesn't just forward your messages — it **amplifies** them. You give a brief, high-level instruction; the orchestrator translates it into a detailed, context-rich task for each worker.
+
+```
+You:            "check for false positives"
+
+Orchestrator:   "14 fixes were applied. Cross-reference each against source:
+                 1. dev:16 — verify ORCHESTRA_DIR controls CLAUDE.md path
+                 2. dev:760 — verify case statement has claude|cc
+                 3. install.sh:88 — verify interactive Ghostty prompt exists
+                 ...
+                 Return CORRECT or FALSE POSITIVE for each with explanation."
+```
+
+Workers have zero context about your conversation. The orchestrator bridges this gap by injecting file paths, line numbers, error messages, and acceptance criteria into every task — so you can stay high-level while workers get exactly what they need.
+
 ## Requirements
 
 - macOS or Linux
