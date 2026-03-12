@@ -44,7 +44,9 @@ Steps:
 7. Add my projects with `dev add <alias> <path>` for each project I want to manage
 8. Run `dev` to start the orchestrator
 
-Read the README at ~/claude-orchestra/README.md for the full command reference.
+9. Read ~/claude-orchestra/README.md and verify nothing was missed — check PATH, tmux prefix, Ghostty config, and all optional features are properly set up.
+
+Refer to the README for the full command reference.
 ```
 
 ---
