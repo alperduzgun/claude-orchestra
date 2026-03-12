@@ -27,7 +27,9 @@ Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/c
 Recommended: Ghostty terminal (https://ghostty.org/) for auto-restore and Cmd+number window switching
 
 Steps:
-1. Install prerequisites if missing: brew install tmux zsh (macOS) or apt install tmux zsh (Linux)
+1. Install prerequisites if missing:
+   - macOS: brew install tmux zsh && brew install --cask ghostty
+   - Linux: apt install tmux zsh (Ghostty: https://ghostty.org/download)
 2. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
 3. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
 4. The installer installs scripts to ~/.local/bin/ and copies config to ~/.config/orchestra/
