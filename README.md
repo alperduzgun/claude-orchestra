@@ -38,10 +38,9 @@ Steps:
    - Ghostty Cmd+number keybindings (Cmd+0 for orchestrator, Cmd+1-9 for workers)
    - tmux config (Catppuccin theme, Ctrl+A prefix, status bar with worker indicators, vim navigation)
 5. If ~/.local/bin is not in PATH, add to shell profile: export PATH="$HOME/.local/bin:$PATH"
-7. Add my projects with `dev add <alias> <path>` for each project I want to manage
-8. Run `dev` to start the orchestrator
-
-9. Read ~/claude-orchestra/README.md and verify nothing was missed — check PATH, tmux prefix, Ghostty config, and all optional features are properly set up.
+6. Add my projects with `dev add <alias> <path>` for each project I want to manage
+7. Run `dev` to start the orchestrator
+8. Read ~/claude-orchestra/README.md and verify nothing was missed — check PATH, Ghostty config, tmux config, and all optional features are properly set up.
 
 Refer to the README for the full command reference.
 ```
