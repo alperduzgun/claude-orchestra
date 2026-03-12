@@ -16,6 +16,15 @@ fi
 CONFIG_DIR="${ORCHESTRA_CONFIG_DIR:-$HOME/.config/orchestra}"
 PROJECTS_FILE="$CONFIG_DIR/projects.conf"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
+
+# Validate CLAUDE_BIN before any tmux send-keys usage (prevents injection)
+_require_claude() {
+  if [[ ! -x "$CLAUDE_BIN" ]]; then
+    echo "ERROR: Claude binary not found or not executable: $CLAUDE_BIN"
+    echo "Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
+    return 1
+  fi
+}
 ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
 # ORCH_DIR: where CLAUDE.md lives for orchestrator mode
 # Override with ORCHESTRA_DIR env var or set in ~/.config/orchestra/orchestra.conf
@@ -37,7 +46,11 @@ _notify() {
   local title="${1:-Orchestra}"
   local msg="${2:-Task complete}"
   if command -v osascript &>/dev/null; then
-    osascript -e "display notification \"$msg\" with title \"$title\"" 2>/dev/null
+    osascript - "$title" "$msg" <<'APPLESCRIPT' 2>/dev/null
+on run argv
+  display notification (item 2 of argv) with title (item 1 of argv)
+end run
+APPLESCRIPT
   elif command -v notify-send &>/dev/null; then
     notify-send "$title" "$msg" 2>/dev/null
   fi
@@ -71,6 +84,12 @@ _add() {
 
   if [[ -z "$alias" || -z "$dir" ]]; then
     echo "Usage: dev add <alias> /path/to/project"
+    return 1
+  fi
+
+  # Validate alias: only alphanumeric, hyphens, underscores
+  if [[ ! "$alias" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Invalid alias: use only letters, numbers, hyphens, underscores"
     return 1
   fi
 
@@ -108,9 +127,9 @@ _remove() {
     return 1
   fi
 
-  # Remove line from config
-  local tmpfile=$(mktemp)
-  grep -vF "$alias=" "$PROJECTS_FILE" > "$tmpfile"
+  # Remove line from config (atomic: write to tmp, verify, then replace)
+  local tmpfile=$(mktemp "$CONFIG_DIR/projects.XXXXXX")
+  grep -vE "^${alias}=" "$PROJECTS_FILE" > "$tmpfile" || true
   mv "$tmpfile" "$PROJECTS_FILE"
   unset "PROJECTS[$alias]"
   echo "Removed: $alias"
@@ -181,7 +200,13 @@ _has_window() {
 # Helper: ensure the orchestra tmux session exists
 _ensure_session() {
   if ! tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$ORCH_SESSION" -n "orchestra" -c "$ORCH_DIR"
+    if [[ ! -d "$ORCH_DIR" ]]; then
+      mkdir -p "$ORCH_DIR" || { echo "ERROR: Cannot create ORCH_DIR: $ORCH_DIR"; return 1; }
+    fi
+    tmux new-session -d -s "$ORCH_SESSION" -n "orchestra" -c "$ORCH_DIR" || {
+      echo "ERROR: Failed to create tmux session '$ORCH_SESSION'"
+      return 1
+    }
   fi
 }
 
@@ -285,7 +310,8 @@ _start() {
     return 1
   fi
 
-  _ensure_session
+  _require_claude || return 1
+  _ensure_session || return 1
 
   # If window exists, check if Claude is running
   if _has_window "$name"; then
@@ -294,8 +320,10 @@ _start() {
       echo "Already running: $name [claude]"
       return 0
     fi
-    # Window exists but no Claude — launch Claude in it
-    tmux send-keys -t "$ORCH_SESSION:$name" "$CLAUDE_BIN --dangerously-skip-permissions" Enter
+    # Window exists but no Claude — attach logger then launch
+    mkdir -p "$LOG_DIR"
+    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
+    tmux send-keys -t "$ORCH_SESSION:$name" "'$CLAUDE_BIN' --dangerously-skip-permissions" Enter
     echo "Launched Claude in existing window: $name"
   else
     # Enforce session limit
@@ -307,8 +335,11 @@ _start() {
     fi
 
     tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+    # Attach logger before launching Claude (captures all output)
+    mkdir -p "$LOG_DIR"
+    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     sleep 0.5
-    tmux send-keys -t "$ORCH_SESSION:$name" "$CLAUDE_BIN --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "'$CLAUDE_BIN' --dangerously-skip-permissions" Enter
     echo "Started: $name -> ${dir/$HOME/~}"
   fi
 
@@ -325,10 +356,6 @@ _start() {
   if [[ $waited -ge $max_wait ]]; then
     echo "WARNING: Claude may not be ready in $name (waited ${max_wait}s)"
   else
-    sleep 3
-    # Enable pipe-pane logging
-    mkdir -p "$LOG_DIR"
-    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
     _log_history "START $name [window $win_index]"
     echo "Ready: $name [window $win_index] — switch with Ctrl+A $win_index"
@@ -372,11 +399,15 @@ _send() {
   if [[ ${#msg} -gt 1000 ]]; then
     local tmpfile=$(mktemp)
     printf '%s' "$msg" > "$tmpfile"
-    tmux load-buffer "$tmpfile"
-    tmux paste-buffer -t "$ORCH_SESSION:$name"
-    rm "$tmpfile"
-    sleep 0.3
-    tmux send-keys -t "$ORCH_SESSION:$name" Enter
+    tmux load-buffer "$tmpfile" && \
+      tmux paste-buffer -t "$ORCH_SESSION:$name" && \
+      sleep 0.3 && \
+      tmux send-keys -t "$ORCH_SESSION:$name" Enter || {
+        echo "ERROR: Failed to send long message to $name"
+        rm -f "$tmpfile"
+        return 1
+      }
+    rm -f "$tmpfile"
   else
     tmux send-keys -l -t "$ORCH_SESSION:$name" "$msg"
     tmux send-keys -t "$ORCH_SESSION:$name" Enter
@@ -443,6 +474,7 @@ _broadcast() {
 _peek() {
   local name="$1"
   local lines="${2:-50}"
+  [[ ! "$lines" =~ ^[0-9]+$ ]] && lines=50
 
   if [[ -z "$name" ]]; then
     echo "Usage: dev peek <project> [lines]"
@@ -500,7 +532,7 @@ _history() {
   fi
 
   if [[ -n "$filter" ]]; then
-    grep -i "$filter" "$HISTORY_FILE" | tail -"$lines"
+    grep -iF "$filter" "$HISTORY_FILE" | tail -"$lines"
   else
     tail -"$lines" "$HISTORY_FILE"
   fi
@@ -620,9 +652,17 @@ _run() {
   echo "Running task in $name (non-interactive)..."
   echo "Output: $outfile"
 
-  (cd "$dir" && "$CLAUDE_BIN" --print "$msg" > "$outfile" 2>&1; \
-    _notify "$name" "Task finished"; \
-    _log_history "RUN-DONE $name") &
+  (
+    cd "$dir" && "$CLAUDE_BIN" --print "$msg" > "$outfile" 2>&1
+    local rc=$?
+    if [[ $rc -eq 0 ]]; then
+      _notify "$name" "Task finished"
+      _log_history "RUN-DONE $name (exit 0)"
+    else
+      _notify "$name" "Task FAILED (exit $rc)"
+      _log_history "RUN-FAILED $name (exit $rc)"
+    fi
+  ) &
 
   echo "Task running in background (PID: $!)"
   echo "Check output: cat $outfile"
@@ -642,7 +682,7 @@ _recover() {
         [[ -z "${PROJECTS[$wname]}" ]] && continue
         if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
           echo "Recovering $wname..."
-          tmux send-keys -t "$ORCH_SESSION:$wname" "$CLAUDE_BIN --dangerously-skip-permissions --resume" Enter
+          tmux send-keys -t "$ORCH_SESSION:$wname" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
           recovered=$((recovered + 1))
           _log_history "RECOVER $wname"
         fi
@@ -674,7 +714,7 @@ _recover() {
   fi
 
   echo "Recovering $target with --resume..."
-  tmux send-keys -t "$ORCH_SESSION:$target" "$CLAUDE_BIN --dangerously-skip-permissions --resume" Enter
+  tmux send-keys -t "$ORCH_SESSION:$target" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
   _log_history "RECOVER $target"
 
   # Wait for readiness
@@ -697,12 +737,13 @@ _recover() {
 
 # Start orchestrator: create master session, open Claude in window 0
 _orchestra() {
-  _ensure_session
+  _require_claude || return 1
+  _ensure_session || return 1
 
   # Launch Claude BEFORE attaching (attach is blocking)
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
   if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd \"$ORCH_DIR\" && \"$CLAUDE_BIN\" --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$ORCH_SESSION:orchestra" "cd '$ORCH_DIR' && '$CLAUDE_BIN' --dangerously-skip-permissions" Enter
   fi
 
   # Now attach/switch (blocking — nothing runs after this until detach)
