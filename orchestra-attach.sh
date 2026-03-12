@@ -39,6 +39,7 @@ if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
   exec tmux attach -t "$ORCH_SESSION"
 fi
 
-# No session — start orchestra from scratch
-echo "Starting orchestra session..."
-exec "$DEV_BIN" orchestra
+# No session — create tmux session and drop into shell
+# User can start orchestrator manually with `dev` when ready
+tmux new-session -d -s "$ORCH_SESSION" -n orchestra -c "${ORCHESTRA_DIR:-$HOME/.config/orchestra}"
+exec tmux attach -t "$ORCH_SESSION"
