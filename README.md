@@ -23,20 +23,24 @@ Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up 
 ```
 Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
 
-Prerequisites: tmux, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code)
-Recommended: Ghostty terminal (https://ghostty.org/) with tmux prefix set to Ctrl+A
+Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code)
+Recommended: Ghostty terminal (https://ghostty.org/) for auto-restore and Cmd+number window switching
 
 Steps:
-1. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
-2. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
-3. The installer will ask about these optional features — say yes to all for the full experience:
+1. Install prerequisites if missing: brew install tmux zsh (macOS) or apt install tmux zsh (Linux)
+2. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
+3. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
+4. The installer installs scripts to ~/.local/bin/ and copies config to ~/.config/orchestra/
+   It will ask about these optional features — say yes to all for the full experience:
    - Ghostty auto-restore (reattach to orchestra session on terminal launch)
    - Ghostty Cmd+number keybindings (Cmd+0 for orchestrator, Cmd+1-9 for workers)
    - tmux status bar with live worker indicators (⚡working / ✓idle)
-   - tmux multi-client window-size fix
-4. If tmux prefix is not Ctrl+A, set it: add `set -g prefix C-a` and `unbind C-b` to ~/.tmux.conf
-5. Add my projects with `dev add <alias> <path>` for each project I want to manage
-6. Run `dev` to start the orchestrator
+   - tmux multi-client window-size fix (prevents smallest-window constraint)
+5. If ~/.local/bin is not in PATH, add to shell profile: export PATH="$HOME/.local/bin:$PATH"
+6. If tmux prefix is not Ctrl+A, set it in ~/.tmux.conf: unbind C-b && set -g prefix C-a && bind C-a send-prefix
+   (Required for Cmd+number keybindings to work)
+7. Add my projects with `dev add <alias> <path>` for each project I want to manage
+8. Run `dev` to start the orchestrator
 
 Read the README at ~/claude-orchestra/README.md for the full command reference.
 ```
