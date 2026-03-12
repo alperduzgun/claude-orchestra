@@ -364,6 +364,11 @@ _send() {
     return 1
   fi
 
+  # Flatten multi-line messages to single line
+  # (Claude Code TUI collapses pasted multi-line text into "[Pasted text]" and won't send it)
+  msg="${msg//$'\n'/ }"
+  msg="${msg//$'\r'/ }"
+
   if [[ ${#msg} -gt 1000 ]]; then
     local tmpfile=$(mktemp)
     printf '%s' "$msg" > "$tmpfile"
