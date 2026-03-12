@@ -794,7 +794,7 @@ case "$1" in
     echo "  dev recover <project>     Recover crashed session (claude --resume)"
     echo "  dev recover --all         Recover all crashed sessions"
     echo "  dev done <project>         Check if worker is idle or working"
-    echo "  dev notify <title> <msg>   Send a macOS notification"
+    echo "  dev notify <title> <msg>   Send a desktop notification (macOS + Linux)"
     echo "  dev kill <project>         Kill a project window"
     echo "  dev cc <project>           Open Claude Code directly in project"
     echo "  dev <project>              Open project shell in a window"

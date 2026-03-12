@@ -17,7 +17,7 @@ while IFS='|' read -r wname pcmd; do
   if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
     # Check if idle by looking for prompt
     output=$(tmux capture-pane -t "$ORCH_SESSION:$wname" -p -S -5 2>/dev/null)
-    if echo "$output" | grep -qE '(running\)|lculating|rnsfiguring|hinking)'; then
+    if echo "$output" | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files)'; then
       result+="#[fg=#f9e2af]⚡${wname}#[default] "
     else
       result+="#[fg=#a6e3a1]✓${wname}#[default] "

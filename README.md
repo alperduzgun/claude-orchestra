@@ -26,11 +26,10 @@ Clone and install Claude Orchestra — a tmux-based multi-session manager for Cl
 Steps:
 1. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
 2. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
-3. Add my projects with `dev add <alias> <path>` for each project I want to manage
-4. If I use Ghostty, add `initial-command = ~/.local/bin/orchestra-attach` to ~/.config/ghostty/config
+3. The installer will ask about Ghostty auto-restore and tmux multi-client fix — say yes to both if applicable
+4. Add my projects with `dev add <alias> <path>` for each project I want to manage
 5. If my tmux prefix is Ctrl+A, append the contents of ghostty.example.conf to my Ghostty config for Cmd+number window switching
-6. Add `set -g window-size latest` to my ~/.tmux.conf if not already present
-7. Run `dev orchestra` to start
+6. Run `dev` to start the orchestrator
 
 Read the README at ~/claude-orchestra/README.md for the full command reference.
 ```
@@ -73,9 +72,10 @@ chmod +x install.sh
 
 The installer will:
 1. Install `dev`, `orchestra-status`, and `orchestra-attach` to `~/.local/bin/`
-2. Create config at `~/.config/orchestra/projects.conf`
-3. **Ask** if you want Ghostty auto-restore (adds `initial-command` to Ghostty config)
-4. **Ask** if you want tmux multi-client fix (adds `window-size latest` to tmux.conf)
+2. Copy the orchestrator prompt (`CLAUDE.md`) to `~/.config/orchestra/`
+3. Create config at `~/.config/orchestra/projects.conf`
+4. **Ask** if you want Ghostty auto-restore (adds `initial-command` to Ghostty config)
+5. **Ask** if you want tmux multi-client fix (adds `window-size latest` to tmux.conf)
 
 ## Setup
 
@@ -92,8 +92,10 @@ Projects are stored in `~/.config/orchestra/projects.conf`.
 ## Usage
 
 ```bash
-# Start the orchestrator
-dev orchestra
+# Start the orchestrator (all equivalent)
+dev                      # shortest
+dev o                    # short alias
+dev orchestra            # full command
 
 # The orchestrator Claude asks which projects to work on
 # You say: "myapp and backend"
@@ -126,10 +128,10 @@ dev list                 # All projects and their status
 dev peek myapp           # Read worker's recent output
 dev watch myapp          # Live tail of worker's log
 dev done myapp           # Check if worker is idle or working
-dev wait myapp           # Wait for worker to finish, then notify
-dev ask myapp "question" # Send question, wait, show response
+dev wait myapp           # Wait for worker to finish (default: 5min timeout)
+dev ask myapp "question" # Send question, wait for response (2min timeout)
 dev run myapp "task"     # Non-interactive task (claude --print)
-dev history              # Show recent task history
+dev history              # Show recent task history (default: last 30)
 dev recover myapp        # Recover crashed session (--resume)
 dev recover --all        # Recover all crashed sessions
 ```
@@ -159,36 +161,37 @@ Environment variables (set in your shell profile):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCHESTRA_SESSION` | `devenv` | tmux session name |
-| `ORCHESTRA_DIR` | `~/.config/orchestra` | Orchestrator CLAUDE.md location |
-| `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Config directory |
+| `ORCHESTRA_DIR` | `~/.config/orchestra` | Where `CLAUDE.md` lives (orchestrator working directory) |
+| `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Where `projects.conf` lives (can differ from `ORCHESTRA_DIR`) |
 | `MAX_CLAUDE_SESSIONS` | `3` | Max concurrent Claude sessions |
 | `CLAUDE_BIN` | auto-detected | Path to Claude Code binary |
+
+> **Note:** `ORCHESTRA_DIR` and `ORCHESTRA_CONFIG_DIR` default to the same path but serve different purposes. `ORCHESTRA_DIR` controls where the orchestrator Claude runs and reads its system prompt. `ORCHESTRA_CONFIG_DIR` controls where the project registry is stored.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `dev` | Start the orchestrator (shortcut) |
-| `dev orchestra` | Start the orchestrator session |
+| `dev` / `dev o` / `dev orch` / `dev orchestra` | Start the orchestrator |
 | `dev start <project>` | Start Claude in a tmux window |
 | `dev send <project> "msg"` | Send message to a project's Claude |
-| `dev peek <project> [lines]` | Read worker's recent output |
+| `dev peek <project> [lines]` | Read worker's recent output (default: 50 lines) |
 | `dev watch <project>` | Live tail of worker's log |
 | `dev done <project>` | Check if worker is idle or working |
-| `dev wait <project> [sec]` | Wait for worker to finish, then notify |
-| `dev ask <project> "msg"` | Send question, wait for response |
+| `dev wait <project> [sec]` | Wait for worker to finish, then notify (default: 300s) |
+| `dev ask <project> "msg"` | Send question, wait for response (timeout: 120s) |
 | `dev run <project> "task"` | Non-interactive task (claude --print) |
 | `dev broadcast "msg"` | Send to all active Claude sessions |
-| `dev history [alias] [n]` | Show recent task history |
+| `dev history [alias] [n]` | Show recent task history (default: 30 lines) |
 | `dev recover <project>` | Recover crashed session (--resume) |
 | `dev recover --all` | Recover all crashed sessions |
 | `dev status` | Show active windows and Claude status |
-| `dev list` | List all configured projects |
+| `dev list` / `dev ls` | List all configured projects |
 | `dev add <alias> <path>` | Add a project |
-| `dev remove <alias>` | Remove a project |
-| `dev notify <title> <msg>` | Send a desktop notification |
+| `dev remove <alias>` / `dev rm <alias>` | Remove a project |
+| `dev notify <title> <msg>` | Send a desktop notification (macOS + Linux) |
 | `dev kill <project>` | Kill a project window |
-| `dev cc <project>` | Open Claude directly (no orchestration) |
+| `dev cc <project>` / `dev claude <project>` | Open Claude directly (no orchestration) |
 | `dev <project>` | Open a shell in the project |
 | `dev help` | Show help |
 
@@ -202,6 +205,7 @@ Environment variables (set in your shell profile):
 - Installer never overwrites existing configs — asks before modifying
 - Alias names validated (alphanumeric, hyphens, underscores only)
 - `CLAUDE_BIN` quoted in all tmux commands (injection prevention)
+- Notifications use safe argv passthrough (no shell interpolation)
 
 ## License
 
