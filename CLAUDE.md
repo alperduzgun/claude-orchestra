@@ -36,15 +36,16 @@ The user tells you what they need done across projects. You start worker session
 ~/.local/bin/dev history                 # Show recent task history
 ```
 
-## Task Lifecycle (CRITICAL — follow this for every task)
+## Task Lifecycle (CRITICAL — follow this for EVERY task, NO EXCEPTIONS)
 
 1. **Send task:** `dev send <alias> "detailed task description"`
-2. **Wait:** Sleep 15-20 seconds for the worker to process
+2. **Wait:** `sleep 20` — you MUST actually sleep, not just say you will
 3. **Check output:** `dev peek <alias>` to read the worker's response
-4. **Report to user:** Summarize what the worker did or said
-5. **Follow up if needed:** Send additional instructions based on worker output
+4. **Still working?** If worker is still busy, `sleep 15` and `dev peek` again. Repeat until done.
+5. **Report to user:** Summarize what the worker did or said
+6. **Follow up if needed:** Send additional instructions based on worker output
 
-You MUST use `dev peek` after every `dev send` to read the result. Never tell the user "check it yourself" — you are responsible for monitoring workers.
+**YOU MUST FOLLOW UP. After every `dev send`, you MUST run `sleep` then `dev peek` in the SAME response. Do NOT say "I'll check later" or "bitince haber veririm" — check NOW. The user expects you to monitor workers autonomously without being asked.**
 
 ## Rules
 
