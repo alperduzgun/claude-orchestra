@@ -1,6 +1,41 @@
-# Claude Orchestra
+<p align="center">
+  <img src="assets/claude-orchestra-orc-conductor-banner.png" alt="Claude Orchestra - AI-powered multi-session orchestrator for Claude Code with tmux" width="100%">
+</p>
 
-Manage multiple Claude Code sessions from a single terminal. One orchestrator Claude controls worker Claude sessions across your projects via tmux.
+<p align="center">
+  <strong>Manage multiple Claude Code sessions from a single terminal.</strong><br>
+  One orchestrator Claude controls worker Claude sessions across your projects via tmux.
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> &bull;
+  <a href="#usage">Usage</a> &bull;
+  <a href="#commands">Commands</a> &bull;
+  <a href="https://github.com/alperduzgun/claude-orchestra/releases">Releases</a>
+</p>
+
+---
+
+## Quick Start (for AI Assistants)
+
+Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up Claude Orchestra automatically:
+
+```
+Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
+
+Steps:
+1. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
+2. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
+3. Add my projects with `dev add <alias> <path>` for each project I want to manage
+4. If I use Ghostty, add `initial-command = ~/.local/bin/orchestra-attach` to ~/.config/ghostty/config
+5. If my tmux prefix is Ctrl+A, append the contents of ghostty.example.conf to my Ghostty config for Cmd+number window switching
+6. Add `set -g window-size latest` to my ~/.tmux.conf if not already present
+7. Run `dev orchestra` to start
+
+Read the README at ~/claude-orchestra/README.md for the full command reference.
+```
+
+---
 
 ## How it works
 
@@ -124,7 +159,7 @@ Environment variables (set in your shell profile):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCHESTRA_SESSION` | `devenv` | tmux session name |
-| `ORCHESTRA_DIR` | `~/Development/orchestra` | Orchestrator CLAUDE.md location |
+| `ORCHESTRA_DIR` | `~/.config/orchestra` | Orchestrator CLAUDE.md location |
 | `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Config directory |
 | `MAX_CLAUDE_SESSIONS` | `3` | Max concurrent Claude sessions |
 | `CLAUDE_BIN` | auto-detected | Path to Claude Code binary |
@@ -133,6 +168,7 @@ Environment variables (set in your shell profile):
 
 | Command | Description |
 |---------|-------------|
+| `dev` | Start the orchestrator (shortcut) |
 | `dev orchestra` | Start the orchestrator session |
 | `dev start <project>` | Start Claude in a tmux window |
 | `dev send <project> "msg"` | Send message to a project's Claude |
@@ -150,7 +186,7 @@ Environment variables (set in your shell profile):
 | `dev list` | List all configured projects |
 | `dev add <alias> <path>` | Add a project |
 | `dev remove <alias>` | Remove a project |
-| `dev notify <title> <msg>` | Send a macOS notification |
+| `dev notify <title> <msg>` | Send a desktop notification |
 | `dev kill <project>` | Kill a project window |
 | `dev cc <project>` | Open Claude directly (no orchestration) |
 | `dev <project>` | Open a shell in the project |
@@ -164,25 +200,8 @@ Environment variables (set in your shell profile):
 - Claude readiness is verified before sending (polls for process, max 15s)
 - Messages >1000 chars use tmux buffer (avoids PTY silent truncation at 1024 bytes)
 - Installer never overwrites existing configs — asks before modifying
-
-## LLM Install Prompt
-
-Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up Claude Orchestra automatically:
-
-```
-Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
-
-Steps:
-1. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
-2. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
-3. Add my projects with `dev add <alias> <path>` for each project I want to manage
-4. If I use Ghostty, add `initial-command = ~/.local/bin/orchestra-attach` to ~/.config/ghostty/config
-5. If my tmux prefix is Ctrl+A, append the contents of ghostty.example.conf to my Ghostty config for Cmd+number window switching
-6. Add `set -g window-size latest` to my ~/.tmux.conf if not already present
-7. Run `dev orchestra` to start
-
-Read the README at ~/claude-orchestra/README.md for the full command reference.
-```
+- Alias names validated (alphanumeric, hyphens, underscores only)
+- `CLAUDE_BIN` quoted in all tmux commands (injection prevention)
 
 ## License
 
