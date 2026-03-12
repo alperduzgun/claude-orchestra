@@ -16,7 +16,8 @@ while IFS='|' read -r wname pcmd; do
   [[ "$wname" == "orchestra" ]] && continue
   if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
     # Check if idle by looking for prompt
-    output=$(tmux capture-pane -t "$ORCH_SESSION:$wname" -p -S -5 2>/dev/null)
+    output=$(tmux capture-pane -t "$ORCH_SESSION:$wname" -p -S -5 2>/dev/null | \
+      sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\xc2\xa0' | sed 's/[[:cntrl:]]//g')
     if echo "$output" | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files)'; then
       result+="#[fg=#f9e2af]⚡${wname}#[default] "
     else
