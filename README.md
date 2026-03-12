@@ -23,12 +23,19 @@ Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up 
 ```
 Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
 
+Prerequisites: tmux, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code)
+Recommended: Ghostty terminal (https://ghostty.org/) with tmux prefix set to Ctrl+A
+
 Steps:
 1. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
 2. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
-3. The installer will ask about Ghostty auto-restore and tmux multi-client fix — say yes to both if applicable
-4. Add my projects with `dev add <alias> <path>` for each project I want to manage
-5. If my tmux prefix is Ctrl+A, append the contents of ghostty.example.conf to my Ghostty config for Cmd+number window switching
+3. The installer will ask about these optional features — say yes to all for the full experience:
+   - Ghostty auto-restore (reattach to orchestra session on terminal launch)
+   - Ghostty Cmd+number keybindings (Cmd+0 for orchestrator, Cmd+1-9 for workers)
+   - tmux status bar with live worker indicators (⚡working / ✓idle)
+   - tmux multi-client window-size fix
+4. If tmux prefix is not Ctrl+A, set it: add `set -g prefix C-a` and `unbind C-b` to ~/.tmux.conf
+5. Add my projects with `dev add <alias> <path>` for each project I want to manage
 6. Run `dev` to start the orchestrator
 
 Read the README at ~/claude-orchestra/README.md for the full command reference.
