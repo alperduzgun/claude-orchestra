@@ -29,7 +29,7 @@ ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
 # ORCH_DIR: where CLAUDE.md lives for orchestrator mode
 # Override with ORCHESTRA_DIR env var or set in ~/.config/orchestra/orchestra.conf
 ORCH_DIR="${ORCHESTRA_DIR:-$HOME/.config/orchestra}"
-MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-3}"
+MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-5}"
 # Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
@@ -147,6 +147,122 @@ _claude_count() {
     done <<< "$windows"
   fi
   echo "$count"
+}
+
+# Resource monitoring: get system load and memory pressure
+_system_load() {
+  local cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+  local load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}' || echo 0)
+  local mem_pressure=$(memory_pressure 2>/dev/null | grep "System-wide memory free percentage" | awk '{print $NF}' | tr -d '%' || echo 50)
+  echo "$load $cores $mem_pressure"
+}
+
+# Auto-cleanup: detect idle workers when system is under pressure
+# NEVER kills workers automatically — only reports to orchestrator Claude
+# The orchestrator must ask the user for permission before killing
+_auto_cleanup() {
+  local force="${1:-}"  # --force flag skips pressure check (for manual cleanup command)
+  local load_info=($(_system_load))
+  local load=${load_info[1]:-0}
+  local cores=${load_info[2]:-4}
+  local mem_free=${load_info[3]:-50}
+
+  # Calculate load threshold (1.5x cores)
+  local threshold=$(echo "$cores * 1.5" | bc 2>/dev/null || echo 12)
+
+  # Check if system is under pressure
+  local pressure=0
+  if (( $(echo "$load > $threshold" | bc 2>/dev/null || echo 0) )); then
+    pressure=1
+  fi
+  if [[ "$mem_free" -lt 10 ]]; then
+    pressure=1
+  fi
+
+  if [[ $pressure -eq 0 && "$force" != "--force" ]]; then
+    return 0
+  fi
+
+  # Find idle workers — report them, do NOT kill
+  local idle_workers=()
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
+    while IFS= read -r wname; do
+      [[ "$wname" == "orchestra" ]] && continue
+      _is_done "$wname" 2>/dev/null
+      if [[ $? -eq 0 ]]; then
+        idle_workers+=("$wname")
+      fi
+    done <<< "$windows"
+  fi
+
+  # Report to orchestrator — let Claude ask user
+  if [[ $pressure -eq 1 ]]; then
+    echo "⚠️  SYSTEM UNDER PRESSURE (load: $load/$threshold, mem free: ${mem_free}%)"
+  fi
+
+  if [[ ${#idle_workers[@]} -gt 0 ]]; then
+    echo "IDLE_WORKERS_FOUND: ${idle_workers[*]}"
+    echo "These idle workers can be killed to free resources:"
+    for w in "${idle_workers[@]}"; do
+      echo "  - $w (idle)"
+    done
+    echo ""
+    echo "To kill specific workers: dev kill <worker_name>"
+    echo "To kill all idle: dev cleanup --confirm"
+  else
+    echo "No idle workers found."
+  fi
+}
+
+# Confirmed cleanup: actually kill idle workers (only after user approval)
+_cleanup_confirmed() {
+  local killed=0
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
+    while IFS= read -r wname; do
+      [[ "$wname" == "orchestra" ]] && continue
+      _is_done "$wname" 2>/dev/null
+      if [[ $? -eq 0 ]]; then
+        echo "  🧹 Killing idle worker: $wname"
+        tmux kill-window -t "$ORCH_SESSION:$wname" 2>/dev/null
+        _log_history "CLEANUP: killed idle worker $wname (user confirmed)"
+        killed=$((killed + 1))
+      fi
+    done <<< "$windows"
+  fi
+
+  if [[ $killed -eq 0 ]]; then
+    echo "No idle workers to clean."
+  else
+    echo "✅ Cleaned $killed idle worker(s)."
+  fi
+}
+
+# Periodic health check — can be called from orchestrator
+_health() {
+  local load_info=($(_system_load))
+  local load=${load_info[1]:-0}
+  local cores=${load_info[2]:-4}
+  local mem_free=${load_info[3]:-50}
+  local active=$(_claude_count)
+  local threshold=$(echo "$cores * 1.5" | bc 2>/dev/null || echo 12)
+
+  echo "System Health:"
+  echo "  CPU Load: $load (threshold: $threshold, cores: $cores)"
+  echo "  Memory Free: ${mem_free}%"
+  echo "  Claude Sessions: $active/$MAX_CLAUDE_SESSIONS"
+
+  if (( $(echo "$load > $threshold" | bc 2>/dev/null || echo 0) )); then
+    echo "  ⚠️  CPU overloaded!"
+  fi
+  if [[ "$mem_free" -lt 10 ]]; then
+    echo "  ⚠️  Memory critical!"
+  fi
+  if [[ "$mem_free" -lt 5 ]]; then
+    echo "  🔴 Memory emergency! Run 'dev cleanup' to see idle workers, then 'dev cleanup --confirm' to kill them."
+    _auto_cleanup --force
+  fi
 }
 
 # Helper: check if a worker Claude is idle (done with task)
@@ -312,6 +428,9 @@ _start() {
 
   _require_claude || return 1
   _ensure_session || return 1
+
+  # Auto-cleanup idle workers if system is under pressure
+  _auto_cleanup 2>/dev/null
 
   # If window exists, check if Claude is running
   if _has_window "$name"; then
@@ -761,6 +880,14 @@ case "$1" in
   start)          _start "$2" ;;
   send)           _send "$2" "${@:3}" ;;
   status)         _status ;;
+  health)         _health ;;
+  cleanup)
+    if [[ "$2" == "--confirm" ]]; then
+      _cleanup_confirmed
+    else
+      _auto_cleanup --force
+    fi
+    ;;
   broadcast)      _broadcast "${@:2}" ;;
   orchestra|orch|o) _orchestra ;;
   peek)           _peek "$2" "$3" ;;

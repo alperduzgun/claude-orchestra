@@ -34,7 +34,26 @@ The user tells you what they need done across projects. You start worker session
 ~/.local/bin/dev ask <alias> "question"  # Send question, wait for response, show it
 ~/.local/bin/dev recover <alias>         # Recover crashed session (claude --resume)
 ~/.local/bin/dev history                 # Show recent task history
+~/.local/bin/dev health                  # Show CPU load, memory, session count
+~/.local/bin/dev cleanup                 # List idle workers that CAN be killed (does NOT kill)
+~/.local/bin/dev cleanup --confirm       # Actually kill all idle workers (ONLY after user approval)
 ```
+
+## Resource Management (CRITICAL)
+
+**NEVER kill workers without asking the user first.** The system will detect pressure but YOU must ask permission.
+
+When system is under pressure (high CPU/low memory):
+1. Run `dev health` to check system status
+2. Run `dev cleanup` to list idle workers
+3. **ASK THE USER:** "System is under pressure. These workers are idle: [list]. Can I kill them to free resources?"
+4. **ONLY after user says yes:** Run `dev cleanup --confirm` or `dev kill <specific_worker>`
+5. If user says no, suggest alternatives: "We can wait for tasks to finish, or reduce parallel work."
+
+When starting new workers (`dev start`):
+- The system auto-checks pressure and reports idle workers
+- If it reports idle workers, ASK the user before killing them
+- Do NOT silently kill workers — the user may have reasons to keep them
 
 ## Task Lifecycle (CRITICAL — follow this for EVERY task, NO EXCEPTIONS)
 

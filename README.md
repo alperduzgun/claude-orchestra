@@ -220,9 +220,27 @@ Environment variables (set in your shell profile):
 | `dev remove <alias>` / `dev rm <alias>` | Remove a project |
 | `dev notify <title> <msg>` | Send a desktop notification (macOS + Linux) |
 | `dev kill <project>` | Kill a project window |
+| `dev health` | Show CPU load, memory usage, session count |
+| `dev cleanup` | List idle workers that can be killed (does NOT kill) |
+| `dev cleanup --confirm` | Kill all idle workers (only after user approval) |
 | `dev cc <project>` / `dev claude <project>` | Open Claude directly (no orchestration) |
 | `dev <project>` | Open a shell in the project |
 | `dev help` | Show help |
+
+## Resource Management
+
+Running multiple Claude sessions is CPU and memory intensive. The orchestrator includes automatic resource monitoring:
+
+- **`dev health`** — Shows system load, memory pressure, and active session count
+- **`dev cleanup`** — Lists idle workers that can be safely killed (report only, no action)
+- **`dev cleanup --confirm`** — Actually kills idle workers (requires explicit confirmation)
+- **Auto-detection** — When starting new workers with `dev start`, the system checks for pressure and reports idle workers
+
+**Important:** The system never kills workers automatically. It reports the situation and the orchestrator Claude must ask the user for permission before killing any worker.
+
+Pressure thresholds:
+- CPU: load average > cores × 1.5
+- Memory: free < 10% (warning), < 5% (critical)
 
 ## Safety
 
