@@ -112,7 +112,26 @@ _add() {
   mkdir -p "$CONFIG_DIR"
   echo "$alias=$dir" >> "$PROJECTS_FILE"
   PROJECTS[$alias]="$dir"
-  echo "Added: $alias -> $dir"
+
+  # Auto-create initial state
+  mkdir -p "$STATES_DIR"
+  local state_file="$STATES_DIR/${alias}.state"
+  if [[ ! -f "$state_file" ]]; then
+    local ptype="unknown"
+    [[ -f "$dir/pubspec.yaml" ]] && ptype="flutter"
+    [[ -f "$dir/pyproject.toml" || -f "$dir/setup.py" ]] && ptype="python"
+    [[ -f "$dir/package.json" && "$ptype" == "unknown" ]] && ptype="node"
+    [[ -f "$dir/Cargo.toml" ]] && ptype="rust"
+    echo "project_type=$ptype" > "$state_file"
+    echo "added_at=$(date '+%Y-%m-%dT%H:%M:%S')" >> "$state_file"
+    echo "last_action=Project added to orchestra" >> "$state_file"
+    echo "last_at=$(date '+%Y-%m-%dT%H:%M:%S')" >> "$state_file"
+    echo "next_todo=" >> "$state_file"
+    echo "blockers=" >> "$state_file"
+    echo "history_1=Project added to orchestra" >> "$state_file"
+  fi
+
+  echo "Added: $alias -> $dir ($ptype)"
 }
 
 # Remove a project from config
