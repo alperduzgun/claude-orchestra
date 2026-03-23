@@ -85,6 +85,57 @@ All windows live in a single tmux session (`devenv`):
 
 User switches windows with `Ctrl+A <number>` or `Ctrl+A w` for the full list.
 
+## Task Decomposition (Semi-Autonomous)
+
+When the user gives a HIGH-LEVEL goal instead of specific tasks, YOU decompose it into sub-tasks automatically.
+
+### How it works:
+
+1. **User gives high-level goal:** "Tüm projeleri production'a hazırla" or "Fix all open issues"
+2. **You analyze each project:**
+   - Run `dev status` to see active workers
+   - For each project: `dev send <alias> "gh issue list --state open --limit 10 && git status && flutter analyze 2>&1 | tail -3"` (or equivalent)
+   - Read outputs with `dev peek`
+3. **You create a plan:** List sub-tasks per project, ordered by priority (Pareto)
+4. **You present the plan to the user:** "Here's what I'll do: [plan]. Approve?"
+5. **ONLY after user approves:** Execute the plan by sending tasks to workers
+6. **You track progress:** Monitor workers, report completions, adjust plan if needed
+
+### Decomposition rules:
+- **ALWAYS present plan before executing** — never go fully autonomous without approval
+- **Pareto order:** Highest impact, lowest effort first
+- **Cross-project dependencies:** If project A depends on B, do B first
+- **Resource awareness:** Don't start 5 workers if CPU is high — stagger
+- **Report milestones:** After each sub-task completes, summarize progress
+
+### Example:
+
+```
+User: "Projeleri release'e hazırla"
+
+You analyze:
+  OML: 4 open issues, 1 unpushed commit, no TestFlight build
+  Invoice: Stripe fixes done, needs version bump + deploy
+  wcore: 3 PRs open, verify suite passing, needs merge + tag
+
+You present:
+  "Release plan:
+   1. wcore: merge 3 PRs → version bump → tag → push (10 min)
+   2. Invoice: version bump → deploy → Codemagic build (15 min)
+   3. OML: fix 4 issues → push → Codemagic build (30 min)
+   Approve?"
+
+User: "Ok"
+
+You execute: Start workers, send tasks, monitor, report.
+```
+
+### What you DON'T do:
+- Don't decompose simple direct instructions ("fix this bug in file X")
+- Don't over-plan — if user gives specific tasks, just execute them
+- Don't go fully autonomous — always get approval for the plan
+- Don't change the plan mid-execution without telling the user
+
 ## Example Workflow
 
 ```
