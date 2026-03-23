@@ -34,6 +34,7 @@ MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-5}"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
 HISTORY_FILE="${HOME}/.local/share/orchestra/history.log"
+STATES_DIR="${HOME}/.config/orchestra/states"
 
 # Log an action to history file
 _log_history() {
@@ -236,6 +237,202 @@ _cleanup_confirmed() {
     echo "No idle workers to clean."
   else
     echo "✅ Cleaned $killed idle worker(s)."
+  fi
+}
+
+# ─── Project State (persistent memory per project) ───
+
+_state_file() {
+  local name="$1"
+  echo "$STATES_DIR/${name}.state"
+}
+
+_state_get() {
+  local name="$1" key="$2"
+  local file="$(_state_file "$name")"
+  [[ -f "$file" ]] && grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-
+}
+
+_state_set() {
+  local name="$1" key="$2" value="$3"
+  local file="$(_state_file "$name")"
+  mkdir -p "$STATES_DIR"
+  if [[ -f "$file" ]] && grep -q "^${key}=" "$file" 2>/dev/null; then
+    sed -i '' "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    echo "${key}=${value}" >> "$file"
+  fi
+}
+
+_state_show() {
+  local name="$1"
+  local file="$(_state_file "$name")"
+  if [[ ! -f "$file" ]]; then
+    echo "No state for $name"
+    return 1
+  fi
+  echo "=== $name ==="
+  local last=$(_state_get "$name" "last_action")
+  local last_at=$(_state_get "$name" "last_at")
+  local todo=$(_state_get "$name" "next_todo")
+  local blockers=$(_state_get "$name" "blockers")
+  [[ -n "$last" ]] && echo "  Last: $last ($last_at)"
+  [[ -n "$todo" ]] && echo "  Next: $todo"
+  [[ -n "$blockers" ]] && echo "  Blocked: $blockers"
+  # Show history
+  local i=1
+  local entry
+  echo "  History:"
+  while entry=$(_state_get "$name" "history_$i"); do
+    [[ -z "$entry" ]] && break
+    echo "    $i. $entry"
+    i=$((i + 1))
+  done
+}
+
+_state_add_history() {
+  local name="$1" entry="$2"
+  local file="$(_state_file "$name")"
+  mkdir -p "$STATES_DIR"
+  # Shift existing history down (max 10)
+  for i in 9 8 7 6 5 4 3 2 1; do
+    local prev=$(_state_get "$name" "history_$i")
+    [[ -n "$prev" ]] && _state_set "$name" "history_$((i+1))" "$prev"
+  done
+  _state_set "$name" "history_1" "$entry"
+}
+
+_state() {
+  local subcmd="$1" name="$2"
+  case "$subcmd" in
+    show)
+      if [[ "$name" == "--all" || -z "$name" ]]; then
+        setopt NULL_GLOB 2>/dev/null
+        for f in "$STATES_DIR"/*.state; do
+          [[ -f "$f" ]] || continue
+          local alias=$(basename "$f" .state)
+          _state_show "$alias"
+          echo ""
+        done
+      else
+        _state_show "$name"
+      fi
+      ;;
+    set)
+      local key="$3" value="${*:4}"
+      if [[ -z "$name" || -z "$key" ]]; then
+        echo "Usage: dev state set <project> <key> <value>"
+        return 1
+      fi
+      _state_set "$name" "$key" "$value"
+      ;;
+    log)
+      local entry="${*:3}"
+      if [[ -z "$name" || -z "$entry" ]]; then
+        echo "Usage: dev state log <project> \"action description\""
+        return 1
+      fi
+      _state_set "$name" "last_action" "$entry"
+      _state_set "$name" "last_at" "$(date '+%Y-%m-%dT%H:%M:%S')"
+      _state_add_history "$name" "$entry"
+      ;;
+    clear)
+      if [[ -z "$name" ]]; then
+        echo "Usage: dev state clear <project>"
+        return 1
+      fi
+      rm -f "$(_state_file "$name")"
+      echo "State cleared: $name"
+      ;;
+    *)
+      echo "Usage: dev state <show|set|log|clear> [project] [args]"
+      echo "  show [project|--all]  Show project state"
+      echo "  set <project> <key> <value>  Set a state value"
+      echo "  log <project> \"action\"  Log an action (updates last + history)"
+      echo "  clear <project>  Clear project state"
+      ;;
+  esac
+}
+
+# ─── Project Analyze (live health check) ───
+
+_analyze() {
+  local name="$1"
+  _load_projects || return 1
+
+  if [[ "$name" == "--all" ]]; then
+    printf "%-14s %-10s %-20s %6s %4s %-8s\n" "PROJECT" "TYPE" "BRANCH" "ISSUES" "PRs" "HEALTH"
+    printf "%-14s %-10s %-20s %6s %4s %-8s\n" "───────" "────" "──────" "──────" "───" "──────"
+    for alias in "${(@k)PROJECTS}"; do
+      _analyze_one "$alias" "table"
+    done
+    return
+  fi
+
+  if [[ -z "$name" ]]; then
+    echo "Usage: dev analyze <project|--all>"
+    return 1
+  fi
+  _analyze_one "$name" "full"
+}
+
+_analyze_one() {
+  local name="$1" mode="$2"
+  local dir="${PROJECTS[$name]}"
+  [[ -z "$dir" ]] && { echo "Unknown project: $name"; return 1; }
+  [[ ! -d "$dir" ]] && { echo "Directory not found: $dir"; return 1; }
+
+  # Detect type
+  local ptype="unknown"
+  [[ -f "$dir/pubspec.yaml" ]] && ptype="flutter"
+  [[ -f "$dir/pyproject.toml" || -f "$dir/setup.py" ]] && ptype="python"
+  [[ -f "$dir/package.json" && "$ptype" == "unknown" ]] && ptype="node"
+  [[ -f "$dir/Cargo.toml" ]] && ptype="rust"
+
+  # Git info
+  local branch="" ahead=0 uncommitted=0 last_commit=""
+  if [[ -d "$dir/.git" ]]; then
+    branch=$(git -C "$dir" branch --show-current 2>/dev/null || echo "detached")
+    ahead=$(git -C "$dir" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
+    uncommitted=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    last_commit=$(git -C "$dir" log -1 --format='%cr' 2>/dev/null || echo "unknown")
+  fi
+
+  # GitHub info (fast, timeout 3s)
+  local issues=0 prs=0
+  local remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null)
+  if [[ -n "$remote_url" ]]; then
+    issues=$(timeout 3 gh issue list --repo "$remote_url" --state open --limit 100 --json number 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+    prs=$(timeout 3 gh pr list --repo "$remote_url" --state open --limit 100 --json number 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+  fi
+  issues=$(echo "${issues:-0}" | tr -d '[:space:]')
+  prs=$(echo "${prs:-0}" | tr -d '[:space:]')
+  ahead=$(echo "${ahead:-0}" | tr -d '[:space:]')
+  uncommitted=$(echo "${uncommitted:-0}" | tr -d '[:space:]')
+  [[ "$issues" =~ ^[0-9]+$ ]] || issues=0
+  [[ "$prs" =~ ^[0-9]+$ ]] || prs=0
+  [[ "$ahead" =~ ^[0-9]+$ ]] || ahead=0
+  [[ "$uncommitted" =~ ^[0-9]+$ ]] || uncommitted=0
+
+  # Health
+  local health="GREEN"
+  (( issues > 0 || uncommitted > 0 || ahead > 0 )) && health="YELLOW"
+  (( issues > 10 || uncommitted > 10 )) && health="RED"
+
+  # State info
+  local last_action=$(_state_get "$name" "last_action")
+  local next_todo=$(_state_get "$name" "next_todo")
+
+  if [[ "$mode" == "table" ]]; then
+    printf "%-14s %-10s %-20s %6s %4s %-8s\n" "$name" "$ptype" "$branch" "$issues" "$prs" "$health"
+  else
+    echo "=== $name ==="
+    echo "  Type: $ptype | Branch: $branch ($ahead ahead, $uncommitted uncommitted)"
+    echo "  Last commit: $last_commit"
+    echo "  Issues: $issues open | PRs: $prs open"
+    echo "  Health: $health"
+    [[ -n "$last_action" ]] && echo "  Last action: $last_action"
+    [[ -n "$next_todo" ]] && echo "  Next: $next_todo"
   fi
 }
 
@@ -881,6 +1078,8 @@ case "$1" in
   send)           _send "$2" "${@:3}" ;;
   status)         _status ;;
   health)         _health ;;
+  state)          _state "$2" "$3" "$4" "${@:5}" ;;
+  analyze)        _analyze "$2" ;;
   cleanup)
     if [[ "$2" == "--confirm" ]]; then
       _cleanup_confirmed

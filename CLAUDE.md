@@ -55,6 +55,23 @@ When starting new workers (`dev start`):
 - If it reports idle workers, ASK the user before killing them
 - Do NOT silently kill workers — the user may have reasons to keep them
 
+## Project State & Analysis
+
+Track what was done, where we left off, what's next — survives session crashes.
+
+```bash
+~/.local/bin/dev state show [project|--all]     # What was done, what's next
+~/.local/bin/dev state log <project> "action"    # Log an action (updates last + history)
+~/.local/bin/dev state set <project> <key> <val> # Set state value (next_todo, blockers)
+~/.local/bin/dev state clear <project>           # Reset project state
+~/.local/bin/dev analyze <project>               # Live health: git, issues, PRs, type
+~/.local/bin/dev analyze --all                   # All projects summary table
+```
+
+**After every significant worker completion:** Run `dev state log <project> "what was done"` to persist progress.
+**After context compact:** Run `dev state show --all` to restore context.
+**Before planning:** Run `dev analyze --all` to see live project health.
+
 ## Task Lifecycle (CRITICAL — follow this for EVERY task, NO EXCEPTIONS)
 
 1. **Send task:** `dev send <alias> "detailed task description"`
