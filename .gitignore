@@ -1,0 +1,9 @@
+# Project-specific configs (not tracked — personal paths)
+projects.conf
+
+# Runtime state and logs
+states/
+worker_types/
+
+# macOS
+.DS_Store
