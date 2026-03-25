@@ -61,10 +61,10 @@ npm i -g @qwen-ai/qwen-code
 # 4. Install GitHub CLI (optional — for dev analyze)
 brew install gh && gh auth login
 
-# 5. Install the dev script
+# 5. Clone this repo and install the dev script
+git clone <repo-url> ~/.config/orchestra
 mkdir -p ~/.local/bin
-cp dev ~/.local/bin/dev
-chmod +x ~/.local/bin/dev
+ln -s ~/.config/orchestra/dev ~/.local/bin/dev
 
 # Add to PATH if needed
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
@@ -226,7 +226,61 @@ dev start myapp --dual
 dev send myapp "Plan: add rate limiting to POST /api/users — 10 req/min per IP"
 sleep 30 && dev peek myapp          # Confirm plan is ready
 dev loop myapp 5                    # Auto plan→implement→review × 5 iterations
+dev loop myapp 5 --test-cmd "npm test"  # With test gate: tests must pass before review
 ```
+
+---
+
+## Spec-Driven Development
+
+Define acceptance criteria before coding. Workers implement exactly what the spec says — nothing more.
+
+### Workflow
+
+```bash
+# 1. Create spec
+dev spec create myapp rate-limit
+
+# 2. Edit it
+nano ~/Development/myapp/.orchestra/specs/rate-limit.md
+
+# 3. Inject into Claude as context
+dev spec inject myapp rate-limit
+
+# 4. Run the loop — Claude knows the spec, Qwen implements to it
+dev loop myapp 5 --test-cmd "npm test"
+
+# 5. Verify implementation against spec
+dev spec check myapp rate-limit
+dev peek myapp   # Claude outputs SPEC_COMPLETE or SPEC_INCOMPLETE
+```
+
+### Spec Format
+
+```markdown
+## Feature: rate-limit
+## Acceptance Criteria:
+- [ ] POST /api/login rate-limited to 10 req/min per IP
+- [ ] Returns 429 with Retry-After header when limit exceeded
+- [ ] Uses Redis as the backing store
+- [ ] Gracefully degrades to allow-all if Redis is unreachable
+## Out of Scope:
+- Per-user rate limits (only per-IP)
+## Constraints / Notes:
+- Must not add latency > 5ms on the happy path
+```
+
+### Spec Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev spec create <alias> <feature>` | Create a blank spec file in project |
+| `dev spec show <alias> <feature>` | Print the spec |
+| `dev spec list <alias>` | List all specs for a project |
+| `dev spec inject <alias> <feature>` | Send spec to Claude as context |
+| `dev spec check <alias> <feature>` | Ask Claude to verify implementation vs spec |
+
+Specs live at `<project-dir>/.orchestra/specs/<feature>.md`.
 
 ---
 

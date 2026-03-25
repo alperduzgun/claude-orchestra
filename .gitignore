@@ -5,5 +5,13 @@ projects.conf
 states/
 worker_types/
 
+# Memory and browser automation (runtime data)
+.mem0/
+.playwright-mcp/
+
+# Screenshots (project-specific assets)
+*.png
+*.jpg
+
 # macOS
 .DS_Store
