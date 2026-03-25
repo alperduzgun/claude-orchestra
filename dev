@@ -1551,6 +1551,7 @@ _loop() {
   _log_history "LOOP START $name (max $max_iter)"
 
   local qwen_timed_out=0
+  local proj_dir="${PROJECTS[$name]}"
 
   while [[ $iter -lt $max_iter ]]; do
     iter=$((iter + 1))
@@ -1558,6 +1559,12 @@ _loop() {
     echo ""
     echo "=== Loop $iter/$max_iter ==="
     _log_history "LOOP $name iter=$iter start"
+
+    # Record git HEAD before Qwen works — used to detect new commits
+    local iter_start_commit=""
+    if [[ -n "$proj_dir" && -d "${proj_dir}/.git" ]]; then
+      iter_start_commit=$(git -C "$proj_dir" rev-parse HEAD 2>/dev/null)
+    fi
 
     # Step 1: Qwen implements
     echo "→ Qwen implementing..."
@@ -1610,20 +1617,55 @@ _loop() {
 
     # Step 3: Claude reviews
     echo "→ Claude reviewing..."
+
+    # Detect if Qwen made a new commit — if so, send git diff instead of terminal relay
+    local iter_end_commit=""
+    local review_msg=""
+    if [[ -n "$proj_dir" && -d "${proj_dir}/.git" ]]; then
+      iter_end_commit=$(git -C "$proj_dir" rev-parse HEAD 2>/dev/null)
+    fi
+
+    # Check for any file changes (committed or uncommitted) since iter start
+    local has_changes=0
+    local uncommitted_changes=""
+    if [[ -n "$proj_dir" && -d "${proj_dir}/.git" ]]; then
+      [[ "$iter_end_commit" != "$iter_start_commit" ]] && has_changes=1
+      uncommitted_changes=$(git -C "$proj_dir" status --porcelain 2>/dev/null)
+      [[ -n "$uncommitted_changes" ]] && has_changes=1
+    fi
+
     if [[ $qwen_timed_out -eq 1 ]]; then
       _relay "$name" --to-claude 20
-      _send "$name" "NOTE: Qwen's output was PARTIAL (timed out). Review what was completed and list what is missing or broken. Do NOT output APPROVED if implementation is incomplete." || {
-        echo "ERROR: Failed to send to Claude. Aborting."
-        trap - INT; return 1
-      }
-    else
+      review_msg="NOTE: Qwen's output was PARTIAL (timed out). Review what was completed and list what is missing or broken. Do NOT output APPROVED if implementation is incomplete."
+    elif [[ $has_changes -eq 0 ]]; then
+      # Qwen reported DONE but made zero file changes
+      # Could mean: (a) already correct, or (b) Qwen missed the task
+      # Let Claude read the actual files and decide — do NOT auto-block approval
+      echo "  (No file changes — Claude will verify current state)"
+      _log_history "LOOP $name iter=$iter NO_CHANGES_DETECTED"
       _relay "$name" --to-claude 20
-      _send "$name" "Review the Qwen implementation above. List specific issues with file paths and line numbers. If everything is correct, output APPROVED on its own line with nothing else." || {
-        echo "ERROR: Failed to send to Claude on iteration $iter. Aborting."
-        _log_history "LOOP $name iter=$iter SEND_FAIL (claude)"
-        trap - INT; return 1
-      }
+      review_msg="Qwen reported DONE but made no file changes. Read the relevant files and verify:
+1. If the code already meets all requirements → output APPROVED on its own line
+2. If changes are still needed → tell Qwen exactly which file, which line, and what to change (do NOT output APPROVED)"
+    elif [[ -n "$iter_end_commit" && -n "$iter_start_commit" && "$iter_end_commit" != "$iter_start_commit" ]]; then
+      # Qwen committed — send actual diff so Claude reviews real code, not terminal output
+      local diff_output
+      diff_output=$(git -C "$proj_dir" diff "${iter_start_commit}" HEAD 2>/dev/null | head -200)
+      echo "  (Qwen committed — sending git diff to Claude)"
+      review_msg="Qwen made a commit. Review this diff for correctness. List specific issues with file paths and line numbers. If everything is correct, output APPROVED on its own line with nothing else.
+
+${diff_output}"
+    else
+      # Uncommitted changes — relay terminal output
+      _relay "$name" --to-claude 20
+      review_msg="Review the Qwen implementation above. List specific issues with file paths and line numbers. If everything is correct, output APPROVED on its own line with nothing else."
     fi
+
+    _send "$name" "$review_msg" || {
+      echo "ERROR: Failed to send to Claude on iteration $iter. Aborting."
+      _log_history "LOOP $name iter=$iter SEND_FAIL (claude)"
+      trap - INT; return 1
+    }
     sleep 5
     _wait "$name" 120 5 3
     local review_rc=$?
@@ -1639,7 +1681,7 @@ _loop() {
     local review
     review=$(_peek "$name" 25 2>/dev/null)
 
-    if echo "$review" | grep -qE '^APPROVED[[:space:]]*$'; then
+    if echo "$review" | grep -qE '^[[:space:]⏺❯>✦•·]*APPROVED[[:space:]]*$'; then
       echo "✅ Loop $iter: Approved!"
       local commit_msg="feat($name): implement changes (loop iter $iter, $(date '+%Y-%m-%d'))"
       if _send "$name" --qwen "Claude approved. Commit all changes: git add -A && git commit -m '$commit_msg'"; then
