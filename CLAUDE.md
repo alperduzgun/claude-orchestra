@@ -126,19 +126,17 @@ sleep 30 && dev peek <alias>                              # Read review
 dev send <alias> "Plan: [describe feature]"              # Claude plans first
 sleep 30 && dev peek <alias>                             # Confirm plan is ready
 dev loop <alias> 5                                       # Auto plan→impl→review×5
-dev loop <alias> 5 --test-cmd "npm test"                 # With test gate (tests must pass before review)
+dev loop <alias> 5 --test-cmd "npm test"                 # Optional: add test gate (tests must pass before review)
 ```
 
-**Option C — Spec-driven loop:**
+**Optional: Spec-driven context**
+Use when the feature has clear acceptance criteria. Skip for simple tasks.
 ```bash
-dev spec create <alias> <feature>                        # Create spec file
-# Edit: <project>/.orchestra/specs/<feature>.md
-dev spec inject <alias> <feature>                        # Send spec to Claude as context
-dev send <alias> "Plan: implement per the spec above"    # Claude plans against spec
-sleep 30 && dev peek <alias>
-dev loop <alias> 5 --test-cmd "npm test"                 # Loop with test gate
-dev spec check <alias> <feature>                         # Verify: SPEC_COMPLETE or SPEC_INCOMPLETE
-dev peek <alias>
+dev spec create <alias> <feature>                        # Creates <project>/.orchestra/specs/<feature>.md
+# Edit the spec file, fill in acceptance criteria
+dev spec inject <alias> <feature>                        # Send spec to Claude← before planning
+# Then continue with Option A or B as normal
+dev spec check <alias> <feature>                         # Optionally verify at the end: SPEC_COMPLETE or SPEC_INCOMPLETE
 ```
 
 **YOU MUST FOLLOW UP. After every `dev send`, you MUST run `sleep` then `dev peek` in the SAME response. Do NOT say "I'll check later" — check NOW.**
