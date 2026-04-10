@@ -1,0 +1,1 @@
+- [No Playwright Suite](feedback_no_playwright_suite.md) — Never run full test suite; always smoke test via curl + Playwright MCP tools

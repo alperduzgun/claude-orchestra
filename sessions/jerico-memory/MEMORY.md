@@ -1,0 +1,2 @@
+- [No full-stack-developer agent](feedback_no_fullstack_agent.md) — implement code directly, never delegate to full-stack-developer subagent
+- [Live testing = manual interaction](feedback_live_testing.md) — "live test" means actually using the running app, never writing/running Playwright specs or unit test suites
