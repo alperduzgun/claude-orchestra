@@ -2,6 +2,7 @@
 # Dev - Project launcher & Claude Code orchestrator
 # Usage: dev <project> | dev list | dev start <project> | dev send <project> "msg"
 # Requires: zsh, tmux, Claude Code (https://docs.anthropic.com/en/docs/claude-code)
+# Version: 1.1.0
 
 # Clear nested Claude Code detection
 unset CLAUDECODE
@@ -16,12 +17,19 @@ fi
 CONFIG_DIR="${ORCHESTRA_CONFIG_DIR:-$HOME/.config/orchestra}"
 PROJECTS_FILE="$CONFIG_DIR/projects.conf"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
+QWEN_BIN="${QWEN_BIN:-$(command -v qwen 2>/dev/null || echo "")}"
 
-# Validate CLAUDE_BIN before any tmux send-keys usage (prevents injection)
+# Validate AI binary before any tmux send-keys usage (prevents injection)
 _require_claude() {
   if [[ ! -x "$CLAUDE_BIN" ]]; then
     echo "ERROR: Claude binary not found or not executable: $CLAUDE_BIN"
     echo "Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
+    return 1
+  fi
+}
+_require_qwen() {
+  if [[ -z "$QWEN_BIN" || ! -x "$QWEN_BIN" ]]; then
+    echo "ERROR: Qwen binary not found. Install: npm i -g @qwen-ai/qwen-code"
     return 1
   fi
 }
@@ -32,14 +40,31 @@ ORCH_DIR="${ORCHESTRA_DIR:-$HOME/.config/orchestra}"
 MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-5}"
 # Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
+# Qwen Code runs as node process
+QWEN_PROC_PATTERN="^node$"
+
+# Track worker type per window (claude or qwen)
+WORKER_TYPES_DIR="${CONFIG_DIR}/worker_types"
+_set_worker_type() { mkdir -p "$WORKER_TYPES_DIR"; echo "$2" > "$WORKER_TYPES_DIR/$1"; }
+_get_worker_type() { cat "$WORKER_TYPES_DIR/$1" 2>/dev/null || echo "claude"; }
+_is_ai_proc() {
+  local pcmd="$1"
+  [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] || [[ "$pcmd" =~ $QWEN_PROC_PATTERN ]]
+}
+# Get pane base index (tmux may use 0 or 1)
+_pane_base() { tmux show-options -gv pane-base-index 2>/dev/null || echo 0; }
+# Claude pane = base, Qwen pane = base+1 (dual mode)
+_claude_pane() { echo ".$(_pane_base)"; }
+_qwen_pane() { echo ".$(( $(_pane_base) + 1 ))"; }
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
 HISTORY_FILE="${HOME}/.local/share/orchestra/history.log"
 STATES_DIR="${HOME}/.config/orchestra/states"
 
 # Log an action to history file
 _log_history() {
-  mkdir -p "$(dirname "$HISTORY_FILE")"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$HISTORY_FILE"
+  mkdir -p "$(dirname "$HISTORY_FILE")" 2>/dev/null || return 0
+  local _entry="${*//[$'\n\r']/↵}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $_entry" >> "$HISTORY_FILE"
 }
 
 # Desktop notification helper (macOS + Linux)
@@ -47,7 +72,7 @@ _notify() {
   local title="${1:-Orchestra}"
   local msg="${2:-Task complete}"
   if command -v osascript &>/dev/null; then
-    osascript - "$title" "$msg" <<'APPLESCRIPT' 2>/dev/null
+    timeout 5 osascript - "$title" "$msg" <<'APPLESCRIPT' 2>/dev/null
 on run argv
   display notification (item 2 of argv) with title (item 1 of argv)
 end run
@@ -65,8 +90,10 @@ _load_projects() {
     echo "Config: $PROJECTS_FILE"
     return 1
   fi
-  while IFS='=' read -r key val; do
-    [[ -z "$key" || "$key" == \#* ]] && continue
+  while IFS= read -r _line; do
+    [[ -z "$_line" || "$_line" == \#* ]] && continue
+    local key="${_line%%=*}"
+    local val="${_line#*=}"
     key="${key## }"; key="${key%% }"
     val="${val## }"; val="${val%% }"
     # Expand ~ and $HOME
@@ -89,10 +116,17 @@ _add() {
   fi
 
   # Validate alias: only alphanumeric, hyphens, underscores
-  if [[ ! "$alias" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "Invalid alias: use only letters, numbers, hyphens, underscores"
+  if [[ ! "$alias" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+    echo "Invalid alias: must start with alphanumeric, then letters/numbers/hyphens/underscores"
     return 1
   fi
+  local _reserved=("orchestra" "devenv")
+  for _r in "${_reserved[@]}"; do
+    if [[ "$alias" == "$_r" ]]; then
+      echo "Reserved alias: '$alias' cannot be used as a project name"
+      return 1
+    fi
+  done
 
   # Resolve to absolute path
   dir="${dir/#\~/$HOME}"
@@ -149,13 +183,20 @@ _remove() {
 
   # Remove line from config (atomic: write to tmp, verify, then replace)
   local tmpfile=$(mktemp "$CONFIG_DIR/projects.XXXXXX")
-  grep -vE "^${alias}=" "$PROJECTS_FILE" > "$tmpfile" || true
+  grep -vF "${alias}=" "$PROJECTS_FILE" > "$tmpfile" || true
+  if [[ ! -s "$tmpfile" && -s "$PROJECTS_FILE" ]]; then
+    rm -f "$tmpfile"
+    echo "ERROR: would empty projects.conf — aborting"
+    return 1
+  fi
   mv "$tmpfile" "$PROJECTS_FILE"
   unset "PROJECTS[$alias]"
+  rm -f "$WORKER_TYPES_DIR/$alias"
   echo "Removed: $alias"
 }
 
-# Helper: count active Claude windows in the orchestra session
+# Helper: count active AI windows (Claude + Qwen) in the orchestra session
+# Dual windows count as 2 (one slot per AI process)
 _claude_count() {
   local count=0
   if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
@@ -163,7 +204,10 @@ _claude_count() {
     while IFS= read -r wname; do
       [[ "$wname" == "orchestra" ]] && continue
       local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
-      [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && count=$((count + 1))
+      if _is_ai_proc "$pane_cmd"; then
+        local cwtype=$(_get_worker_type "$wname")
+        [[ "$cwtype" == "dual" ]] && count=$((count + 2)) || count=$((count + 1))
+      fi
     done <<< "$windows"
   fi
   echo "$count"
@@ -177,6 +221,19 @@ _system_load() {
   echo "$load $cores $mem_pressure"
 }
 
+# List idle worker names (used by both _auto_cleanup and _cleanup_confirmed)
+_list_idle_workers() {
+  local idle_workers=()
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
+    while IFS= read -r wname; do
+      [[ "$wname" == "orchestra" ]] && continue
+      _is_done "$wname" 2>/dev/null && idle_workers+=("$wname")
+    done <<< "$windows"
+  fi
+  echo "${idle_workers[@]}"
+}
+
 # Auto-cleanup: detect idle workers when system is under pressure
 # NEVER kills workers automatically — only reports to orchestrator Claude
 # The orchestrator must ask the user for permission before killing
@@ -188,11 +245,11 @@ _auto_cleanup() {
   local mem_free=${load_info[3]:-50}
 
   # Calculate load threshold (1.5x cores)
-  local threshold=$(echo "$cores * 1.5" | bc 2>/dev/null || echo 12)
+  local threshold=$(awk "BEGIN{printf \"%d\", $cores * 1.5}")
 
   # Check if system is under pressure
   local pressure=0
-  if (( $(echo "$load > $threshold" | bc 2>/dev/null || echo 0) )); then
+  if awk "BEGIN{exit !($load > $threshold)}" 2>/dev/null; then
     pressure=1
   fi
   if [[ "$mem_free" -lt 10 ]]; then
@@ -204,17 +261,7 @@ _auto_cleanup() {
   fi
 
   # Find idle workers — report them, do NOT kill
-  local idle_workers=()
-  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
-    while IFS= read -r wname; do
-      [[ "$wname" == "orchestra" ]] && continue
-      _is_done "$wname" 2>/dev/null
-      if [[ $? -eq 0 ]]; then
-        idle_workers+=("$wname")
-      fi
-    done <<< "$windows"
-  fi
+  local idle_workers=($(_list_idle_workers))
 
   # Report to orchestrator — let Claude ask user
   if [[ $pressure -eq 1 ]]; then
@@ -237,21 +284,15 @@ _auto_cleanup() {
 
 # Confirmed cleanup: actually kill idle workers (only after user approval)
 _cleanup_confirmed() {
+  local idle_workers=($(_list_idle_workers))
   local killed=0
-  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
-    while IFS= read -r wname; do
-      [[ "$wname" == "orchestra" ]] && continue
-      _is_done "$wname" 2>/dev/null
-      if [[ $? -eq 0 ]]; then
-        echo "  🧹 Killing idle worker: $wname"
-        tmux kill-window -t "$ORCH_SESSION:$wname" 2>/dev/null
-        _log_history "CLEANUP: killed idle worker $wname (user confirmed)"
-        killed=$((killed + 1))
-      fi
-    done <<< "$windows"
-  fi
-
+  for wname in "${idle_workers[@]}"; do
+    echo "  🧹 Killing idle worker: $wname"
+    tmux kill-window -t "$ORCH_SESSION:$wname" 2>/dev/null
+    rm -f "$WORKER_TYPES_DIR/$wname"
+    _log_history "CLEANUP: killed idle worker $wname (user confirmed)"
+    killed=$((killed + 1))
+  done
   if [[ $killed -eq 0 ]]; then
     echo "No idle workers to clean."
   else
@@ -269,18 +310,24 @@ _state_file() {
 _state_get() {
   local name="$1" key="$2"
   local file="$(_state_file "$name")"
-  [[ -f "$file" ]] && grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-
+  [[ -f "$file" ]] && grep -F "${key}=" "$file" 2>/dev/null | grep "^${key}=" | head -1 | cut -d= -f2-
 }
 
 _state_set() {
   local name="$1" key="$2" value="$3"
   local file="$(_state_file "$name")"
   mkdir -p "$STATES_DIR"
-  if [[ -f "$file" ]] && grep -q "^${key}=" "$file" 2>/dev/null; then
-    sed -i '' "s|^${key}=.*|${key}=${value}|" "$file"
+  # Escape sed delimiter and back-references in key and value
+  local safe_key="${key//\\/\\\\}"; safe_key="${safe_key//|/\\|}"
+  local safe_val="${value//\\/\\\\}"; safe_val="${safe_val//|/\\|}"; safe_val="${safe_val//&/\\&}"
+  local tmpfile
+  tmpfile=$(mktemp "${file}.XXXXXX") || return 1
+  if [[ -f "$file" ]] && grep -qF "${key}=" "$file" 2>/dev/null; then
+    sed "s|^${safe_key}=.*|${safe_key}=${safe_val}|" "$file" > "$tmpfile" || { rm -f "$tmpfile"; return 1; }
   else
-    echo "${key}=${value}" >> "$file"
+    { [[ -f "$file" ]] && cat "$file"; echo "${key}=${value}"; } > "$tmpfile" || { rm -f "$tmpfile"; return 1; }
   fi
+  mv "$tmpfile" "$file" || { rm -f "$tmpfile"; return 1; }
 }
 
 _state_show() {
@@ -302,7 +349,7 @@ _state_show() {
   local i=1
   local entry
   echo "  History:"
-  while entry=$(_state_get "$name" "history_$i"); do
+  while [[ $i -le 20 ]] && entry=$(_state_get "$name" "history_$i"); do
     [[ -z "$entry" ]] && break
     echo "    $i. $entry"
     i=$((i + 1))
@@ -314,7 +361,7 @@ _state_add_history() {
   local file="$(_state_file "$name")"
   mkdir -p "$STATES_DIR"
   # Shift existing history down (max 10)
-  for i in 9 8 7 6 5 4 3 2 1; do
+  for i in 10 9 8 7 6 5 4 3 2 1; do
     local prev=$(_state_get "$name" "history_$i")
     [[ -n "$prev" ]] && _state_set "$name" "history_$((i+1))" "$prev"
   done
@@ -421,15 +468,29 @@ _analyze_one() {
   local issues=0 prs=0
   local remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null)
   if [[ -n "$remote_url" ]]; then
-    issues=$(timeout 3 gh issue list --repo "$remote_url" --state open --limit 100 --json number 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-    prs=$(timeout 3 gh pr list --repo "$remote_url" --state open --limit 100 --json number 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+    # Parse to owner/repo format required by gh --repo
+    local gh_repo=""
+    if [[ "$remote_url" =~ ^git@github\.com:(.+)\.git$ ]]; then
+      gh_repo="${match[1]}"
+    elif [[ "$remote_url" =~ ^https://github\.com/(.+)\.git$ ]]; then
+      gh_repo="${match[1]}"
+    elif [[ "$remote_url" =~ ^https://github\.com/(.+)$ ]]; then
+      gh_repo="${match[1]}"
+    fi
+    if [[ -n "$gh_repo" ]]; then
+      local gh_ok=1
+      issues=$(timeout 3 gh issue list --repo "$gh_repo" --state open --limit 100 --json number 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) || { issues=0; gh_ok=0; }
+      prs=$(timeout 3 gh pr list --repo "$gh_repo" --state open --limit 100 --json number 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null) || { prs=0; gh_ok=0; }
+      [[ $gh_ok -eq 0 ]] && issues="?" && prs="?"
+      [[ $gh_ok -eq 0 ]] && _log_history "ANALYZE $name: gh CLI timeout — data unreliable"
+    fi
   fi
   issues=$(echo "${issues:-0}" | tr -d '[:space:]')
   prs=$(echo "${prs:-0}" | tr -d '[:space:]')
   ahead=$(echo "${ahead:-0}" | tr -d '[:space:]')
   uncommitted=$(echo "${uncommitted:-0}" | tr -d '[:space:]')
-  [[ "$issues" =~ ^[0-9]+$ ]] || issues=0
-  [[ "$prs" =~ ^[0-9]+$ ]] || prs=0
+  [[ "$issues" == "?" ]] || { [[ "$issues" =~ ^[0-9]+$ ]] || issues=0; }
+  [[ "$prs" == "?" ]] || { [[ "$prs" =~ ^[0-9]+$ ]] || prs=0; }
   [[ "$ahead" =~ ^[0-9]+$ ]] || ahead=0
   [[ "$uncommitted" =~ ^[0-9]+$ ]] || uncommitted=0
 
@@ -442,13 +503,18 @@ _analyze_one() {
   local last_action=$(_state_get "$name" "last_action")
   local next_todo=$(_state_get "$name" "next_todo")
 
+  local issues_display="$issues"
+  local prs_display="$prs"
+  [[ "$issues" == "?" ]] && issues_display="? (gh timeout)"
+  [[ "$prs" == "?" ]] && prs_display="? (gh timeout)"
+
   if [[ "$mode" == "table" ]]; then
-    printf "%-14s %-10s %-20s %6s %4s %-8s\n" "$name" "$ptype" "$branch" "$issues" "$prs" "$health"
+    printf "%-14s %-10s %-20s %6s %4s %-8s\n" "$name" "$ptype" "$branch" "$issues_display" "$prs_display" "$health"
   else
     echo "=== $name ==="
     echo "  Type: $ptype | Branch: $branch ($ahead ahead, $uncommitted uncommitted)"
     echo "  Last commit: $last_commit"
-    echo "  Issues: $issues open | PRs: $prs open"
+    echo "  Issues: $issues_display open | PRs: $prs_display open"
     echo "  Health: $health"
     [[ -n "$last_action" ]] && echo "  Last action: $last_action"
     [[ -n "$next_todo" ]] && echo "  Next: $next_todo"
@@ -462,14 +528,14 @@ _health() {
   local cores=${load_info[2]:-4}
   local mem_free=${load_info[3]:-50}
   local active=$(_claude_count)
-  local threshold=$(echo "$cores * 1.5" | bc 2>/dev/null || echo 12)
+  local threshold=$(awk "BEGIN{printf \"%d\", $cores * 1.5}")
 
   echo "System Health:"
   echo "  CPU Load: $load (threshold: $threshold, cores: $cores)"
   echo "  Memory Free: ${mem_free}%"
   echo "  Claude Sessions: $active/$MAX_CLAUDE_SESSIONS"
 
-  if (( $(echo "$load > $threshold" | bc 2>/dev/null || echo 0) )); then
+  if awk "BEGIN{exit !($load > $threshold)}" 2>/dev/null; then
     echo "  ⚠️  CPU overloaded!"
   fi
   if [[ "$mem_free" -lt 10 ]]; then
@@ -482,29 +548,53 @@ _health() {
 }
 
 # Helper: check if a worker Claude is idle (done with task)
-# Returns 0 if idle, 1 if working, 2 if not Claude
+# Returns 0 if idle, 1 if working, 2 if not running
+# For dual mode: returns 0 only when BOTH panes are idle
 _is_done() {
   local name="$1"
   if ! _has_window "$name"; then return 2; fi
 
+  local wtype=$(_get_worker_type "$name")
+
+  if [[ "$wtype" == "dual" ]]; then
+    local claude_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name$(_claude_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+    if ! _is_ai_proc "$claude_cmd"; then return 2; fi
+
+    local claude_out=$(tmux capture-pane -t "$ORCH_SESSION:$name$(_claude_pane)" -p -S -10 2>/dev/null | \
+      sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\xc2\xa0' | sed 's/[[:cntrl:]]//g')
+    local qwen_out=$(tmux capture-pane -t "$ORCH_SESSION:$name$(_qwen_pane)" -p -S -10 2>/dev/null | \
+      sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\xc2\xa0' | sed 's/[[:cntrl:]]//g')
+
+    # Either pane still working?
+    if echo "$claude_out" | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files|Engge|generting)'; then return 1; fi
+    if echo "$qwen_out"  | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files|Engge|generting)'; then return 1; fi
+
+    local claude_idle=1; echo "$claude_out" | grep -q '❯' && claude_idle=0
+    local qwen_idle=1;   echo "$qwen_out"   | grep -qiE '(YOLO mode|Type your message|ontet used)' && qwen_idle=0
+
+    [[ $claude_idle -eq 0 && $qwen_idle -eq 0 ]] && return 0
+    return 1
+  fi
+
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then return 2; fi
+  if ! _is_ai_proc "$pane_cmd"; then return 2; fi
 
   # Capture last 10 lines and check for active work indicators
   local output=$(tmux capture-pane -t "$ORCH_SESSION:$name" -p -S -10 2>/dev/null | \
     sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\xc2\xa0' | sed 's/[[:cntrl:]]//g')
 
-  # Active patterns: Claude is still working
-  if echo "$output" | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files)'; then
+  # Active patterns: AI is still working (both Claude and Qwen)
+  if echo "$output" | grep -qiE '(running\)|lculating|rnsfiguring|hinking|Reding.*files|iting.*files|Engge|generting)'; then
     return 1
   fi
 
-  # Idle pattern: prompt line visible (❯ character)
-  if echo "$output" | grep -q '❯'; then
-    return 0
+  # Idle pattern: Claude uses ❯, Qwen uses >
+  if [[ "$wtype" == "qwen" ]]; then
+    if echo "$output" | grep -qiE '(YOLO mode|Type your message|ontet used)'; then return 0; fi
+  else
+    if echo "$output" | grep -q '❯'; then return 0; fi
   fi
 
-  # Unknown — assume still working
   return 1
 }
 
@@ -516,10 +606,11 @@ _done() {
   fi
   _is_done "$name"
   local result=$?
+  local wtype=$(_get_worker_type "$name")
   case $result in
     0) echo "$name: idle (done)" ;;
     1) echo "$name: working..." ;;
-    2) echo "$name: not running Claude" ;;
+    2) echo "$name: not running $wtype" ;;
   esac
   return $result
 }
@@ -557,8 +648,8 @@ _list() {
     local sess_state=""
     if _has_window "$key"; then
       local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$key" -F "#{pane_current_command}" 2>/dev/null | head -1)
-      if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-        sess_state="[claude]"
+      if _is_ai_proc "$pane_cmd"; then
+        sess_state="[$(_get_worker_type "$key")]"
       else
         sess_state="[shell]"
       fi
@@ -627,9 +718,14 @@ _claude() {
   cd "$dir" && claude
 }
 
-# Start Claude in a new window within the orchestra session
+# Start AI worker (Claude or Qwen) in a new window within the orchestra session
+# Usage: dev start <project> [--qwen|--dual]
 _start() {
   local name="$1"
+  local worker_type="claude"
+  [[ "$2" == "--qwen" || "$2" == "qwen" ]] && worker_type="qwen"
+  [[ "$2" == "--dual" || "$2" == "dual" ]] && worker_type="dual"
+
   local dir="${PROJECTS[$name]}"
 
   if [[ -z "$dir" ]]; then
@@ -642,65 +738,156 @@ _start() {
     return 1
   fi
 
-  _require_claude || return 1
+  # Validate the right binary
+  if [[ "$worker_type" == "dual" ]]; then
+    _require_claude || return 1
+    _require_qwen || return 1
+  elif [[ "$worker_type" == "qwen" ]]; then
+    _require_qwen || return 1
+  else
+    _require_claude || return 1
+  fi
   _ensure_session || return 1
 
   # Auto-cleanup idle workers if system is under pressure
   _auto_cleanup 2>/dev/null
 
-  # If window exists, check if Claude is running
+  # Build launch command based on worker type
+  local launch_cmd
+  if [[ "$worker_type" == "qwen" ]]; then
+    launch_cmd="'$QWEN_BIN' --yolo"
+  elif [[ "$worker_type" == "dual" ]]; then
+    launch_cmd="'$CLAUDE_BIN' --dangerously-skip-permissions"
+  else
+    launch_cmd="'$CLAUDE_BIN' --dangerously-skip-permissions"
+  fi
+
+  # If window exists, check if AI is running
   if _has_window "$name"; then
     local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-    if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-      echo "Already running: $name [claude]"
+    if _is_ai_proc "$pane_cmd"; then
+      local existing_type=$(_get_worker_type "$name")
+      echo "Already running: $name [$existing_type]"
       return 0
     fi
-    # Window exists but no Claude — attach logger then launch
+    # Window exists but no AI — check limit before launching
+    local active=$(_claude_count)
+    local needed=1
+    [[ "$worker_type" == "dual" ]] && needed=2
+    if [[ $((active + needed)) -gt $MAX_CLAUDE_SESSIONS ]]; then
+      echo "ERROR: Max $MAX_CLAUDE_SESSIONS active sessions reached (current: $active, need: $needed)."
+      echo "Kill one first: dev kill <project>"
+      return 1
+    fi
     mkdir -p "$LOG_DIR"
-    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
-    tmux send-keys -t "$ORCH_SESSION:$name" "'$CLAUDE_BIN' --dangerously-skip-permissions" Enter
-    echo "Launched Claude in existing window: $name"
+    local logfile="$LOG_DIR/${name}.log"
+    if [[ -f "$logfile" ]]; then
+      local logsize=$(stat -f%z "$logfile" 2>/dev/null || stat -c%s "$logfile" 2>/dev/null || echo 0)
+      if [[ $logsize -gt 104857600 ]]; then
+        mv "$logfile" "$logfile.$(date +%Y%m%d-%H%M%S)"
+        find "$LOG_DIR" -name "${name}.log.*" -mtime +7 -delete 2>/dev/null
+      fi
+    fi
+    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$logfile'"
+    tmux send-keys -t "$ORCH_SESSION:$name" "$launch_cmd" Enter
+    _set_worker_type "$name" "$worker_type"
+    echo "Launched $worker_type in existing window: $name"
   else
     # Enforce session limit
     local active=$(_claude_count)
-    if [[ $active -ge $MAX_CLAUDE_SESSIONS ]]; then
-      echo "ERROR: Max $MAX_CLAUDE_SESSIONS active Claude sessions reached (current: $active)."
+    local needed=1
+    [[ "$worker_type" == "dual" ]] && needed=2
+    if [[ $((active + needed)) -gt $MAX_CLAUDE_SESSIONS ]]; then
+      echo "ERROR: Max $MAX_CLAUDE_SESSIONS active sessions reached (current: $active, need: $needed)."
       echo "Kill one first: dev kill <project>"
       return 1
     fi
 
     tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
-    # Attach logger before launching Claude (captures all output)
     mkdir -p "$LOG_DIR"
-    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
+    local logfile="$LOG_DIR/${name}.log"
+    if [[ -f "$logfile" ]]; then
+      local logsize=$(stat -f%z "$logfile" 2>/dev/null || stat -c%s "$logfile" 2>/dev/null || echo 0)
+      if [[ $logsize -gt 104857600 ]]; then
+        mv "$logfile" "$logfile.$(date +%Y%m%d-%H%M%S)"
+        find "$LOG_DIR" -name "${name}.log.*" -mtime +7 -delete 2>/dev/null
+      fi
+    fi
+    tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$logfile'"
     sleep 0.5
-    tmux send-keys -t "$ORCH_SESSION:$name" "'$CLAUDE_BIN' --dangerously-skip-permissions" Enter
-    echo "Started: $name -> ${dir/$HOME/~}"
+
+    if [[ "$worker_type" == "dual" ]]; then
+      # Dual mode: top pane = Claude, bottom pane = Qwen
+      tmux send-keys -t "$ORCH_SESSION:$name" "$launch_cmd" Enter
+      sleep 1
+      # Split vertically (left/right), right pane gets Qwen
+      tmux split-window -h -t "$ORCH_SESSION:$name" -c "$dir" -l 50% || {
+        echo "ERROR: Failed to create Qwen pane for $name"
+        tmux kill-window -t "$ORCH_SESSION:$name" 2>/dev/null
+        return 1
+      }
+      sleep 0.5
+      tmux send-keys -t "$ORCH_SESSION:$name$(_qwen_pane)" "'$QWEN_BIN' --yolo" Enter
+      # Select top pane (Claude) as default
+      tmux select-pane -t "$ORCH_SESSION:$name$(_claude_pane)"
+    else
+      tmux send-keys -t "$ORCH_SESSION:$name" "$launch_cmd" Enter
+    fi
+
+    _set_worker_type "$name" "$worker_type"
+    echo "Started ($worker_type): $name -> ${dir/$HOME/~}"
   fi
 
-  # Wait for Claude to be ready (poll for process, max 15s)
+  # Wait for AI to be ready (poll for process, max 15s)
   local max_wait=15
   local waited=0
   while [[ $waited -lt $max_wait ]]; do
-    local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-    [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && break
+    local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name$(_claude_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+    _is_ai_proc "$pane_cmd" && break
     sleep 1
     waited=$((waited + 1))
   done
 
+  if [[ "$worker_type" == "dual" ]]; then
+    # Also wait for Qwen pane
+    local qwait=0
+    while [[ $qwait -lt $max_wait ]]; do
+      local qcmd=$(tmux list-panes -t "$ORCH_SESSION:$name$(_qwen_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      _is_ai_proc "$qcmd" && break
+      sleep 1
+      qwait=$((qwait + 1))
+    done
+  fi
+
   if [[ $waited -ge $max_wait ]]; then
-    echo "WARNING: Claude may not be ready in $name (waited ${max_wait}s)"
+    echo "WARNING: $worker_type may not be ready in $name (waited ${max_wait}s)"
   else
     local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
-    _log_history "START $name [window $win_index]"
-    echo "Ready: $name [window $win_index] — switch with Ctrl+A $win_index"
+    _log_history "START $name [$worker_type] [window $win_index]"
+    if [[ "$worker_type" == "dual" ]]; then
+      echo "Ready: $name [dual: claude← qwen→] [window $win_index] — Ctrl+A $win_index"
+    else
+      echo "Ready: $name [$worker_type] [window $win_index] — switch with Ctrl+A $win_index"
+    fi
   fi
 }
 
-# Send a message to a Claude window
+# Send a message to an AI worker window
+# In dual mode: dev send <project> --qwen "msg" sends to Qwen pane
 _send() {
   local name="$1"
   shift
+
+  # Parse --qwen flag for dual mode
+  local target_pane=""
+  local wtype=$(_get_worker_type "$name")
+  if [[ "$wtype" == "dual" && "$1" == "--qwen" ]]; then
+    target_pane="$(_qwen_pane)"  # bottom pane = Qwen
+    shift
+  elif [[ "$wtype" == "dual" ]]; then
+    target_pane="$(_claude_pane)"  # top pane = Claude (default)
+  fi
+
   local msg="$*"
 
   # Validate project alias
@@ -715,14 +902,14 @@ _send() {
   fi
 
   if [[ -z "$msg" ]]; then
-    echo "Usage: dev send <project> <message>"
+    echo "Usage: dev send <project> [--qwen] <message>"
     return 1
   fi
 
-  # Check that Claude is actually running
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    echo "ERROR: $name is not running Claude (running: $pane_cmd). Start with: dev start $name"
+  # Check that AI is actually running in target pane
+  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name${target_pane}" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  if ! _is_ai_proc "$pane_cmd"; then
+    echo "ERROR: $name is not running an AI worker (running: $pane_cmd). Start with: dev start $name"
     return 1
   fi
 
@@ -731,26 +918,33 @@ _send() {
   msg="${msg//$'\n'/ }"
   msg="${msg//$'\r'/ }"
 
+  local target="$ORCH_SESSION:$name${target_pane}"
+
   if [[ ${#msg} -gt 1000 ]]; then
-    local tmpfile=$(mktemp)
+    local tmpfile=$(mktemp) || return 1
     printf '%s' "$msg" > "$tmpfile"
-    tmux load-buffer "$tmpfile" && \
-      tmux paste-buffer -t "$ORCH_SESSION:$name" && \
-      sleep 0.3 && \
-      tmux send-keys -t "$ORCH_SESSION:$name" Enter || {
-        echo "ERROR: Failed to send long message to $name"
-        rm -f "$tmpfile"
-        return 1
-      }
-    rm -f "$tmpfile"
+    if tmux load-buffer "$tmpfile" && tmux paste-buffer -t "$target"; then
+      sleep 0.3
+      tmux send-keys -t "$target" Enter
+      rm -f "$tmpfile"
+    else
+      rm -f "$tmpfile"
+      echo "ERROR: Failed to send long message to $name"
+      return 1
+    fi
   else
-    tmux send-keys -l -t "$ORCH_SESSION:$name" "$msg"
-    tmux send-keys -t "$ORCH_SESSION:$name" Enter
+    tmux send-keys -l -t "$target" "$msg"
+    # Qwen's TUI needs a brief pause to process pasted input before Enter
+    [[ "$target_pane" == "$(_qwen_pane)" ]] && sleep 0.3
+    tmux send-keys -t "$target" Enter
   fi
 
-  _log_history "SEND $name: ${msg:0:200}"
+  local pane_label=""
+  [[ "$target_pane" == "$(_qwen_pane)" ]] && pane_label=" (qwen→)"
+  [[ "$target_pane" == "$(_claude_pane)" ]] && pane_label=" (claude←)"
+  _log_history "SEND $name${pane_label}: ${msg:0:200}"
   local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
-  echo "Sent to $name [window $win_index]: ${msg:0:80}$([ ${#msg} -gt 80 ] && echo '...')"
+  echo "Sent to $name${pane_label} [window $win_index]: ${msg:0:80}$([ ${#msg} -gt 80 ] && echo '...')"
 }
 
 # Show status of all active windows in the orchestra session
@@ -767,14 +961,25 @@ _status() {
       local dir="${PROJECTS[$wname]}"
       [[ -z "$dir" ]] && dir="(orchestrator)"
       local sess_state="shell"
-      [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && sess_state="claude"
+      if _is_ai_proc "$pcmd"; then
+        local swtype=$(_get_worker_type "$wname")
+        if [[ "$swtype" == "dual" ]]; then
+          local c_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname$(_claude_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+          local q_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname$(_qwen_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+          local c_s="off"; _is_ai_proc "$c_cmd" && c_s="on"
+          local q_s="off"; _is_ai_proc "$q_cmd" && q_s="on"
+          sess_state="dual[c:$c_s|q:$q_s]"
+        else
+          sess_state="$swtype"
+        fi
+      fi
       printf "  %-4s %-18s %-12s %s\n" "$idx" "$wname" "[$sess_state]" "${dir/$HOME/~}"
     done <<< "$windows"
   fi
 
   [[ $found -eq 0 ]] && echo "  No active sessions. Start with: dev orchestra"
   echo ""
-  echo "  Claude sessions: $(_claude_count)/$MAX_CLAUDE_SESSIONS"
+  echo "  AI sessions: $(_claude_count)/$MAX_CLAUDE_SESSIONS"
   echo ""
 }
 
@@ -793,39 +998,57 @@ _broadcast() {
     while IFS= read -r wname; do
       [[ "$wname" == "orchestra" ]] && continue
       local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
-      if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-        _send "$wname" "$msg"
-        count=$((count + 1))
+      if _is_ai_proc "$pane_cmd"; then
+        local bwtype=$(_get_worker_type "$wname")
+        if [[ "$bwtype" == "dual" ]]; then
+          _send "$wname" "$msg"
+          _send "$wname" --qwen "$msg"
+          count=$((count + 2))
+        else
+          _send "$wname" "$msg"
+          count=$((count + 1))
+        fi
         sleep 0.2
       else
         skipped=$((skipped + 1))
       fi
     done <<< "$windows"
   fi
-  echo "Broadcast to $count Claude sessions (skipped $skipped non-Claude windows)."
+  echo "Broadcast to $count AI sessions (skipped $skipped non-AI windows)."
 }
 
 # Peek at a worker's recent output
 _peek() {
   local name="$1"
-  local lines="${2:-50}"
-  [[ ! "$lines" =~ ^[0-9]+$ ]] && lines=50
-
   if [[ -z "$name" ]]; then
-    echo "Usage: dev peek <project> [lines]"
+    echo "Usage: dev peek <project> [--qwen] [lines]"
     return 1
   fi
+  local target_pane=""
+  local lines=50
+  local wtype=$(_get_worker_type "$name")
+
+  # Parse args: check --qwen flag before treating $2 as line count
+  if [[ "$wtype" == "dual" && "$2" == "--qwen" ]]; then
+    target_pane="$(_qwen_pane)"
+    lines="${3:-50}"
+  elif [[ "$wtype" == "dual" ]]; then
+    target_pane="$(_claude_pane)"
+    lines="${2:-50}"
+  else
+    lines="${2:-50}"
+  fi
+  [[ ! "$lines" =~ ^[0-9]+$ ]] && lines=50
 
   if ! _has_window "$name"; then
     echo "No window for $name"
     return 1
   fi
 
-  _log_history "PEEK $name"
+  _log_history "PEEK $name${target_pane}"
 
   # Capture pane content and strip ANSI/TUI garbage
-  # (capture-pane is cleaner than pipe-pane logs for reading)
-  tmux capture-pane -t "$ORCH_SESSION:$name" -p -S "-$lines" | \
+  tmux capture-pane -t "$ORCH_SESSION:$name${target_pane}" -p -S "-$lines" | \
     sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
     sed 's/\x1b\][^\x07]*\x07//g' | \
     tr -d '\xc2\xa0' | \
@@ -876,7 +1099,9 @@ _history() {
 # Wait for a worker to finish, then notify
 _wait() {
   local name="$1"
-  local max_wait="${2:-300}"  # default 5 minutes
+  local max_wait="${2:-300}"
+  local initial_sleep="${3:-5}"
+  local poll_interval="${4:-3}"
 
   if [[ -z "$name" ]]; then
     echo "Usage: dev wait <project> [timeout_seconds]"
@@ -892,6 +1117,11 @@ _wait() {
   local waited=0
   local start_time=$(date +%s)
 
+  # Give the AI time to start processing before polling
+  # Without this, _is_done sees the previous idle ❯ prompt and returns immediately
+  sleep "$initial_sleep"
+  waited=$initial_sleep
+
   while [[ $waited -lt $max_wait ]]; do
     _is_done "$name"
     local result=$?
@@ -902,11 +1132,12 @@ _wait() {
       echo "$name: done (${elapsed}s)"
       return 0
     elif [[ $result -eq 2 ]]; then
-      echo "$name: Claude not running"
+      local wtype=$(_get_worker_type "$name")
+      echo "$name: $wtype not running"
       return 2
     fi
-    sleep 3
-    waited=$((waited + 3))
+    sleep "$poll_interval"
+    waited=$((waited + poll_interval))
   done
 
   _notify "$name" "Timed out after ${max_wait}s"
@@ -940,12 +1171,12 @@ _ask() {
     if [[ $result -eq 0 ]]; then
       _log_history "ASK-DONE $name (${waited}s)"
       echo ""
-      echo "--- Response from $name ---"
-      _peek "$name" 30
+      echo "Response ready in $name. Check with: dev peek $name 50"
       _notify "$name" "Response ready"
       return 0
     elif [[ $result -eq 2 ]]; then
-      echo "$name: Claude not running"
+      local wtype=$(_get_worker_type "$name")
+      echo "$name: $wtype not running"
       return 2
     fi
     sleep 3
@@ -953,8 +1184,7 @@ _ask() {
   done
 
   echo "$name: timed out waiting for response (${timeout}s)"
-  echo "--- Partial output ---"
-  _peek "$name" 20
+  echo "Partial output in $name. Check with: dev peek $name 50"
   return 1
 }
 
@@ -1011,15 +1241,39 @@ _recover() {
     # Recover all crashed sessions
     local recovered=0
     if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-      local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_current_command}" 2>/dev/null)
-      while IFS='|' read -r wname pcmd; do
+      local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
+      while IFS= read -r wname; do
         [[ "$wname" == "orchestra" ]] && continue
         [[ -z "${PROJECTS[$wname]}" ]] && continue
-        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-          echo "Recovering $wname..."
-          tmux send-keys -t "$ORCH_SESSION:$wname" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
-          recovered=$((recovered + 1))
-          _log_history "RECOVER $wname"
+        local rwtype=$(_get_worker_type "$wname")
+        if [[ "$rwtype" == "dual" ]]; then
+          # Check and recover each pane independently
+          local claude_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname$(_claude_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+          if ! _is_ai_proc "$claude_cmd"; then
+            echo "Recovering $wname [claude←]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname$(_claude_pane)" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
+            recovered=$((recovered + 1))
+            _log_history "RECOVER $wname [claude←]"
+          fi
+          local qwen_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname$(_qwen_pane)" -F "#{pane_current_command}" 2>/dev/null | head -1)
+          if ! _is_ai_proc "$qwen_cmd"; then
+            echo "Recovering $wname [qwen→]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname$(_qwen_pane)" "'$QWEN_BIN' --yolo --continue" Enter
+            recovered=$((recovered + 1))
+            _log_history "RECOVER $wname [qwen→]"
+          fi
+        else
+          local pcmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
+          if ! _is_ai_proc "$pcmd"; then
+            echo "Recovering $wname [$rwtype]..."
+            if [[ "$rwtype" == "qwen" ]]; then
+              tmux send-keys -t "$ORCH_SESSION:$wname" "'$QWEN_BIN' --yolo --continue" Enter
+            else
+              tmux send-keys -t "$ORCH_SESSION:$wname" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
+            fi
+            recovered=$((recovered + 1))
+            _log_history "RECOVER $wname"
+          fi
         fi
       done <<< "$windows"
     fi
@@ -1043,31 +1297,426 @@ _recover() {
   fi
 
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    echo "$target: Claude is already running"
+  if _is_ai_proc "$pane_cmd"; then
+    local rtype=$(_get_worker_type "$target")
+    echo "$target: $rtype is already running"
     return 0
   fi
 
-  echo "Recovering $target with --resume..."
-  tmux send-keys -t "$ORCH_SESSION:$target" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
-  _log_history "RECOVER $target"
+  local rtype=$(_get_worker_type "$target")
+  echo "Recovering $target [$rtype] with --resume..."
+  if [[ "$rtype" == "qwen" ]]; then
+    tmux send-keys -t "$ORCH_SESSION:$target" "'$QWEN_BIN' --yolo --continue" Enter
+  else
+    tmux send-keys -t "$ORCH_SESSION:$target" "'$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
+  fi
+  _log_history "RECOVER $target [$rtype]"
 
   # Wait for readiness
   local max_wait=15
   local waited=0
   while [[ $waited -lt $max_wait ]]; do
     pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
-    [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && break
+    _is_ai_proc "$pane_cmd" && break
     sleep 1
     waited=$((waited + 1))
   done
 
   if [[ $waited -ge $max_wait ]]; then
-    echo "WARNING: Claude may not be ready in $target"
+    echo "WARNING: $rtype may not be ready in $target"
   else
     echo "Recovered: $target"
     _notify "$target" "Session recovered"
   fi
+}
+
+# Relay: pipe one pane's output to the other in dual mode
+# Usage: dev relay <project> --to-qwen [lines]   # Send Claude's output to Qwen
+#        dev relay <project> --to-claude [lines]  # Send Qwen's output to Claude
+#        dev relay <project> --swap [lines]       # Both directions (Claude→Qwen summary + Qwen→Claude summary)
+_relay() {
+  local name="$1"
+  local direction="$2"
+  local lines="${3:-20}"
+  [[ ! "$lines" =~ ^[0-9]+$ ]] && lines=20
+
+  if [[ -z "$name" || -z "$direction" ]]; then
+    echo "Usage: dev relay <project> --to-qwen|--to-claude|--swap [lines]"
+    return 1
+  fi
+
+  local wtype=$(_get_worker_type "$name")
+  if [[ "$wtype" != "dual" ]]; then
+    echo "ERROR: $name is not in dual mode. Start with: dev start $name --dual"
+    return 1
+  fi
+
+  local claude_pane="$(_claude_pane)"
+  local qwen_pane="$(_qwen_pane)"
+
+  # Capture and clean output from a pane
+  _capture_clean() {
+    tmux capture-pane -t "$ORCH_SESSION:$name$1" -p -S "-$lines" 2>/dev/null | \
+      sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
+      sed 's/\x1b\][^\x07]*\x07//g' | \
+      tr -d '\xc2\xa0' | \
+      sed 's/[[:cntrl:]]//g' | \
+      grep -v '^[[:space:]]*$' | \
+      tail -"$lines"
+  }
+
+  case "$direction" in
+    --to-qwen)
+      local output=$(_capture_clean "$claude_pane")
+      if [[ -z "$output" ]]; then
+        echo "No output to relay from Claude←"
+        return 1
+      fi
+      if [[ ${#output} -gt 3000 ]]; then
+        echo "WARNING: relay output is ${#output} chars — consider using fewer lines"
+      fi
+      local prefix="[PLAN from Claude←] Implement exactly as stated: "
+      _send "$name" --qwen "${prefix}${output}"
+      echo "Relayed Claude← output ($lines lines) → Qwen→"
+      ;;
+    --to-claude)
+      local output=$(_capture_clean "$qwen_pane")
+      if [[ -z "$output" ]]; then
+        echo "No output to relay from Qwen→"
+        return 1
+      fi
+      if [[ ${#output} -gt 3000 ]]; then
+        echo "WARNING: relay output is ${#output} chars — consider using fewer lines"
+      fi
+      local prefix="[RESULT from Qwen→] Code review — list issues only, do not implement: "
+      _send "$name" "${prefix}${output}"
+      echo "Relayed Qwen→ output ($lines lines) → Claude←"
+      ;;
+    --swap)
+      local c_output=$(_capture_clean "$claude_pane")
+      local q_output=$(_capture_clean "$qwen_pane")
+      if [[ -n "$q_output" ]]; then
+        if [[ ${#q_output} -gt 3000 ]]; then
+          echo "WARNING: relay output is ${#q_output} chars — consider using fewer lines"
+        fi
+        _send "$name" "[SCOUT from Qwen→] Use as context: ${q_output}"
+        echo "Relayed Qwen→ → Claude←"
+      fi
+      if [[ -n "$c_output" ]]; then
+        if [[ ${#c_output} -gt 3000 ]]; then
+          echo "WARNING: relay output is ${#c_output} chars — consider using fewer lines"
+        fi
+        _send "$name" --qwen "[PLAN from Claude←] Continue implementation: ${c_output}"
+        echo "Relayed Claude← → Qwen→"
+      fi
+      ;;
+    *)
+      echo "Unknown direction: $direction"
+      echo "Usage: dev relay <project> --to-qwen|--to-claude|--swap [lines]"
+      return 1
+      ;;
+  esac
+  _log_history "RELAY $name $direction"
+}
+
+# Automated plan→implement→review loop for dual mode
+# Usage: dev loop <project> [max_iterations]
+_spec() {
+  local subcmd="$1" name="$2" feature="$3"
+
+  if [[ -z "$subcmd" ]]; then
+    echo "Usage: dev spec <create|show|list|inject|check> <alias> [feature]"
+    return 1
+  fi
+
+  if [[ "$subcmd" != "list" && -z "$name" ]]; then
+    echo "Usage: dev spec $subcmd <alias> [feature]"
+    return 1
+  fi
+
+  local proj_dir="${PROJECTS[$name]}"
+  if [[ -n "$name" && -z "$proj_dir" ]]; then
+    echo "ERROR: Unknown project: $name. Run: dev list"
+    return 1
+  fi
+
+  local spec_dir="${proj_dir}/.orchestra/specs"
+
+  case "$subcmd" in
+    create)
+      [[ -z "$feature" ]] && { echo "Usage: dev spec create <alias> <feature>"; return 1; }
+      mkdir -p "$spec_dir"
+      local file="$spec_dir/${feature}.md"
+      if [[ -f "$file" ]]; then
+        echo "Spec already exists: $file"
+        return 1
+      fi
+      cat > "$file" << EOF
+## Feature: $feature
+## Acceptance Criteria:
+- [ ]
+- [ ]
+## Out of Scope:
+## Constraints / Notes:
+EOF
+      echo "Created: $file"
+      echo "Edit it, then: dev spec inject $name $feature"
+      ;;
+    show)
+      [[ -z "$feature" ]] && { echo "Usage: dev spec show <alias> <feature>"; return 1; }
+      local file="$spec_dir/${feature}.md"
+      [[ -f "$file" ]] || { echo "No spec: $file. Create: dev spec create $name $feature"; return 1; }
+      cat "$file"
+      ;;
+    list)
+      [[ -z "$name" ]] && { echo "Usage: dev spec list <alias>"; return 1; }
+      if [[ ! -d "$spec_dir" ]]; then echo "No specs for $name"; return 0; fi
+      local count=0
+      for f in "$spec_dir"/*.md; do
+        [[ -f "$f" ]] && echo "  $(basename "$f" .md)" && count=$((count+1))
+      done
+      [[ $count -eq 0 ]] && echo "No specs for $name"
+      return 0
+      ;;
+    inject)
+      [[ -z "$feature" ]] && { echo "Usage: dev spec inject <alias> <feature>"; return 1; }
+      local file="$spec_dir/${feature}.md"
+      [[ -f "$file" ]] || { echo "No spec: $file"; return 1; }
+      local content
+      content=$(cat "$file")
+      _send "$name" "SPEC: This is the single source of truth for what needs to be built. Implement exactly to these criteria — nothing more, nothing less.
+
+$content
+
+Confirm you've read the spec and will implement exactly to these criteria. Then wait for the implementation task." || return 1
+      echo "Spec '$feature' injected to $name (claude←). Now send the task or start a loop."
+      ;;
+    check)
+      [[ -z "$feature" ]] && { echo "Usage: dev spec check <alias> <feature>"; return 1; }
+      local file="$spec_dir/${feature}.md"
+      [[ -f "$file" ]] || { echo "No spec: $file"; return 1; }
+      local content
+      content=$(cat "$file")
+      _send "$name" "Check the current codebase against this spec. For each acceptance criterion (lines starting with '- [ ]'), verify if it is correctly implemented. Output PASS or FAIL for each with a one-line reason. Finish with either: SPEC_COMPLETE or SPEC_INCOMPLETE.
+
+$content" || return 1
+      echo "Spec check sent to $name. Use: dev peek $name"
+      ;;
+    *)
+      echo "Unknown subcommand: $subcmd"
+      echo "Usage: dev spec <create|show|list|inject|check> <alias> [feature]"
+      return 1
+      ;;
+  esac
+}
+
+_loop() {
+  local name=""
+  local max_iter=5
+  local test_cmd=""
+  local iter=0
+
+  # Parse args: loop <alias> [max_iter] [--test-cmd "cmd"]
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --test-cmd) test_cmd="$2"; shift 2 ;;
+      *)
+        if [[ -z "$name" ]]; then name="$1"
+        elif [[ "$1" =~ ^[0-9]+$ ]]; then max_iter="$1"
+        fi
+        shift ;;
+    esac
+  done
+
+  if [[ -z "$name" ]]; then
+    echo "Usage: dev loop <alias> [max_iter] [--test-cmd 'npm test']"
+    return 1
+  fi
+
+  local wtype=$(_get_worker_type "$name")
+  if [[ "$wtype" != "dual" ]]; then
+    echo "ERROR: $name is not in dual mode. Start with: dev start $name --dual"
+    return 1
+  fi
+
+  if ! _has_window "$name"; then
+    echo "ERROR: No window for $name"
+    return 1
+  fi
+
+  trap 'echo ""; echo "Loop interrupted. $name workers still running."; trap - INT; return 1' INT
+
+  [[ -n "$test_cmd" ]] && echo "Test gate: $test_cmd"
+  echo "Starting plan→implement→review loop for $name (max $max_iter iterations)"
+  _log_history "LOOP START $name (max $max_iter)"
+
+  local qwen_timed_out=0
+  local proj_dir="${PROJECTS[$name]}"
+
+  while [[ $iter -lt $max_iter ]]; do
+    iter=$((iter + 1))
+    qwen_timed_out=0
+    echo ""
+    echo "=== Loop $iter/$max_iter ==="
+    _log_history "LOOP $name iter=$iter start"
+
+    # Record git HEAD before Qwen works — used to detect new commits
+    local iter_start_commit=""
+    if [[ -n "$proj_dir" && -d "${proj_dir}/.git" ]]; then
+      iter_start_commit=$(git -C "$proj_dir" rev-parse HEAD 2>/dev/null)
+    fi
+
+    # Step 1: Qwen implements
+    echo "→ Qwen implementing..."
+    _send "$name" --qwen "Implement the plan above. When finished, output exactly: DONE" || {
+      echo "ERROR: Failed to send to Qwen on iteration $iter. Aborting loop."
+      _log_history "LOOP $name iter=$iter SEND_FAIL (qwen)"
+      trap - INT; return 1
+    }
+    sleep 5
+    _wait "$name" 300 5 5
+    local wait_rc=$?
+    if [[ $wait_rc -eq 2 ]]; then
+      echo "ERROR: Qwen not running. Aborting loop."
+      _log_history "LOOP $name iter=$iter QWEN_DEAD"
+      trap - INT; return 1
+    fi
+    if [[ $wait_rc -ne 0 ]]; then
+      echo "WARNING: Qwen timed out on iter $iter — output may be partial."
+      _log_history "LOOP $name iter=$iter QWEN_TIMEOUT"
+      qwen_timed_out=1
+    fi
+
+    # Step 2: Test gate (optional)
+    if [[ -n "$test_cmd" ]]; then
+      echo "→ Running test gate: $test_cmd"
+      _send "$name" --qwen "$test_cmd 2>&1; echo \"TEST_GATE:\$?\"" || {
+        echo "WARNING: Failed to send test command. Skipping test gate."
+      }
+      if [[ $? -eq 0 ]]; then
+        sleep 5
+        _wait "$name" 120 5 5
+        local test_peek
+        test_peek=$(_peek "$name" --qwen 30 2>/dev/null)
+        if echo "$test_peek" | grep -qE '^TEST_GATE:[^0]'; then
+          echo "❌ Test gate FAILED on iter $iter — relaying to Claude for re-plan"
+          _log_history "LOOP $name iter=$iter TEST_GATE_FAIL"
+          _relay "$name" --to-claude 30
+          _send "$name" "Test gate FAILED. Analyze the failures above. Produce a new step-by-step fix plan. Do NOT write code — plan only." || {
+            echo "ERROR: Failed to send test failure to Claude. Aborting."
+            trap - INT; return 1
+          }
+          sleep 5
+          _wait "$name" 120 5 3
+          _relay "$name" --to-qwen 20
+          continue
+        fi
+        echo "✅ Test gate passed"
+      fi
+    fi
+
+    # Step 3: Claude reviews
+    echo "→ Claude reviewing..."
+
+    # Detect if Qwen made a new commit — if so, send git diff instead of terminal relay
+    local iter_end_commit=""
+    local review_msg=""
+    if [[ -n "$proj_dir" && -d "${proj_dir}/.git" ]]; then
+      iter_end_commit=$(git -C "$proj_dir" rev-parse HEAD 2>/dev/null)
+    fi
+
+    # Check for any file changes (committed or uncommitted) since iter start
+    local has_changes=0
+    local uncommitted_changes=""
+    if [[ -n "$proj_dir" && -d "${proj_dir}/.git" ]]; then
+      [[ "$iter_end_commit" != "$iter_start_commit" ]] && has_changes=1
+      uncommitted_changes=$(git -C "$proj_dir" status --porcelain 2>/dev/null)
+      [[ -n "$uncommitted_changes" ]] && has_changes=1
+    fi
+
+    if [[ $qwen_timed_out -eq 1 ]]; then
+      _relay "$name" --to-claude 20
+      review_msg="NOTE: Qwen's output was PARTIAL (timed out). Review what was completed and list what is missing or broken. Do NOT output APPROVED if implementation is incomplete."
+    elif [[ $has_changes -eq 0 ]]; then
+      # Qwen reported DONE but made zero file changes
+      # Could mean: (a) already correct, or (b) Qwen missed the task
+      # Let Claude read the actual files and decide — do NOT auto-block approval
+      echo "  (No file changes — Claude will verify current state)"
+      _log_history "LOOP $name iter=$iter NO_CHANGES_DETECTED"
+      _relay "$name" --to-claude 20
+      review_msg="Qwen reported DONE but made no file changes. Read the relevant files and verify:
+1. If the code already meets all requirements → output APPROVED on its own line
+2. If changes are still needed → tell Qwen exactly which file, which line, and what to change (do NOT output APPROVED)"
+    elif [[ -n "$iter_end_commit" && -n "$iter_start_commit" && "$iter_end_commit" != "$iter_start_commit" ]]; then
+      # Qwen committed — send actual diff so Claude reviews real code, not terminal output
+      local diff_output
+      diff_output=$(git -C "$proj_dir" diff "${iter_start_commit}" HEAD 2>/dev/null | head -200)
+      echo "  (Qwen committed — sending git diff to Claude)"
+      review_msg="Qwen made a commit. Review this diff for correctness. List specific issues with file paths and line numbers. If everything is correct, output APPROVED on its own line with nothing else.
+
+${diff_output}"
+    else
+      # Uncommitted changes — relay terminal output
+      _relay "$name" --to-claude 20
+      review_msg="Review the Qwen implementation above. List specific issues with file paths and line numbers. If everything is correct, output APPROVED on its own line with nothing else."
+    fi
+
+    _send "$name" "$review_msg" || {
+      echo "ERROR: Failed to send to Claude on iteration $iter. Aborting."
+      _log_history "LOOP $name iter=$iter SEND_FAIL (claude)"
+      trap - INT; return 1
+    }
+    sleep 5
+    _wait "$name" 120 5 3
+    local review_rc=$?
+
+    # If Claude timed out — never trust stale peek, skip approval and retry
+    if [[ $review_rc -ne 0 ]]; then
+      echo "WARNING: Claude review timed out on iter $iter — skipping approval check, retrying."
+      _log_history "LOOP $name iter=$iter CLAUDE_TIMEOUT_SKIP_APPROVAL"
+      _relay "$name" --to-qwen 15
+      continue
+    fi
+
+    local review
+    review=$(_peek "$name" 25 2>/dev/null)
+
+    if echo "$review" | grep -qE '^[[:space:]⏺❯>✦•·]*APPROVED[[:space:]]*$'; then
+      echo "✅ Loop $iter: Approved!"
+      local commit_msg="feat($name): implement changes (loop iter $iter, $(date '+%Y-%m-%d'))"
+      if _send "$name" --qwen "Claude approved. Commit all changes: git add -A && git commit -m '$commit_msg'"; then
+        sleep 5
+        _wait "$name" 60 5 3
+        local commit_rc=$?
+        if [[ $commit_rc -ne 0 ]]; then
+          echo "WARNING: Commit may not have completed. Verify: dev peek $name --qwen"
+          _log_history "LOOP $name COMMIT_TIMEOUT after $iter iterations"
+        else
+          _log_history "LOOP $name COMPLETE after $iter iterations"
+          echo "Loop complete after $iter iterations."
+        fi
+      else
+        echo "WARNING: Failed to send commit command. Verify manually: dev peek $name --qwen"
+        _log_history "LOOP $name COMMIT_SEND_FAIL after $iter iterations"
+      fi
+      trap - INT
+      return 0
+    fi
+
+    if [[ $qwen_timed_out -eq 1 ]]; then
+      echo "→ Partial output — Claude will guide Qwen to continue..."
+    else
+      echo "→ Issues found on iter $iter — relaying to Qwen for fix..."
+    fi
+    _log_history "LOOP $name iter=$iter issues_found — relaying to Qwen"
+    _relay "$name" --to-qwen 15
+  done
+
+  trap - INT
+  echo "⚠️  Max iterations ($max_iter) reached without approval."
+  echo "Check manually: dev peek $name && dev peek $name --qwen"
+  _log_history "LOOP $name MAX_ITER_REACHED ($max_iter)"
+  return 1
 }
 
 # Start orchestrator: create master session, open Claude in window 0
@@ -1077,7 +1726,7 @@ _orchestra() {
 
   # Launch Claude BEFORE attaching (attach is blocking)
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ ! "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+  if ! _is_ai_proc "$pane_cmd"; then
     tmux send-keys -t "$ORCH_SESSION:orchestra" "cd '$ORCH_DIR' && '$CLAUDE_BIN' --dangerously-skip-permissions" Enter
   fi
 
@@ -1093,7 +1742,7 @@ case "$1" in
   list|ls)        _list ;;
   kill)           _kill "$2" ;;
   claude|cc)      _claude "$2" ;;
-  start)          _start "$2" ;;
+  start)          _start "$2" "$3" ;;
   send)           _send "$2" "${@:3}" ;;
   status)         _status ;;
   health)         _health ;;
@@ -1115,18 +1764,29 @@ case "$1" in
   ask)            _ask "$2" "${@:3}" ;;
   run)            _run "$2" "${@:3}" ;;
   recover)        _recover "$2" ;;
+  relay)          _relay "$2" "$3" "$4" ;;
+  loop)           _loop "${@:2}" ;;
+  spec)           _spec "$2" "$3" "$4" ;;
   notify)         _notify "$2" "${@:3}" ;;
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
   remove|rm)      _remove "$2" ;;
+  --version|-v) grep '^# Version:' "$0" | head -1 | awk '{print $3}' ;;
   help|-h)
     echo "Usage:"
     echo "  dev                        Start orchestrator (shortcut)"
     echo "  dev orchestra              Start orchestrator (master session)"
-    echo "  dev start <project>        Start Claude in a window (max $MAX_CLAUDE_SESSIONS)"
-    echo "  dev send <project> <msg>   Send message to project's Claude"
-    echo "  dev peek <project> [lines] Read worker's recent output"
-    echo "  dev broadcast <msg>        Send to all active Claude sessions"
+    echo "  dev start <project> [--qwen|--dual] Start AI worker (Claude/Qwen/Dual)"
+    echo "  dev send <project> [--qwen] <msg>  Send message (--qwen for right pane)"
+    echo "  dev peek <project> [--qwen] [lines] Read output (--qwen for right pane)"
+    echo "  dev relay <project> --to-qwen|--to-claude|--swap  Relay output between panes"
+    echo "  dev loop <project> [max] [--test-cmd 'cmd']  Run plan→implement→review loop (dual mode)"
+    echo "  dev spec create <project> <feature>   Create spec file for a feature"
+    echo "  dev spec inject <project> <feature>   Send spec to Claude as context"
+    echo "  dev spec check <project> <feature>    Ask Claude to verify vs spec"
+    echo "  dev spec show <project> <feature>     Print spec file"
+    echo "  dev spec list <project>               List all specs for project"
+    echo "  dev broadcast <msg>        Send to all active AI sessions"
     echo "  dev status                 Show all windows and their status"
     echo "  dev list                   List all projects"
     echo "  dev add <alias> <path>     Add a project"

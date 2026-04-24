@@ -1,6 +1,40 @@
-.DS_Store
-*.backup
-.mem0/
+# Project-specific config (user-edited, never committed)
 projects.conf
-.env
-*.log
+
+# Runtime state and logs
+states/
+worker_types/
+test-results/
+.ai_windows
+.orchestrator_ai
+
+# Memory and automation caches (runtime data)
+.mem0/
+.playwright-mcp/
+
+# Personal session logs / memory notes
+sessions/
+.claude/
+
+# Session snapshots (tmux capture-pane yml dumps)
+after-*.yml
+before-*.yml
+claude-panel.yml
+demo-*.yml
+new-*.yml
+post-spawn-*.yml
+settings-*.yml
+spawn-*.yml
+wd-picker.yml
+
+# Screenshots and captures
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -18,25 +18,51 @@ The user tells you what they need done across projects. You start worker session
 
 ## Commands (always use full path via Bash tool)
 
-**CRITICAL: To start Claude in a project, ALWAYS use `dev start <alias>`. NEVER use `dev <alias>` — that only opens a shell without Claude.**
+**CRITICAL: To start a worker, ALWAYS use `dev start <alias>`. NEVER use `dev <alias>` — that only opens a shell.**
 
 ```bash
-~/.local/bin/dev start <alias>           # Start a Claude session (creates a tmux window + launches Claude)
-~/.local/bin/dev send <alias> "message"  # Send a task/message to a worker Claude
-~/.local/bin/dev peek <alias>            # Read worker's recent output (last 50 lines)
-~/.local/bin/dev peek <alias> 100        # Read last 100 lines
-~/.local/bin/dev broadcast "message"     # Send same message to ALL active Claude sessions
-~/.local/bin/dev kill <alias>            # Kill a project window
-~/.local/bin/dev list                    # List all projects and their status
-~/.local/bin/dev status                  # Show active windows, Claude status, session count
-~/.local/bin/dev done <alias>            # Check if worker is idle or working
-~/.local/bin/dev wait <alias>            # Wait for worker to finish, then notify
-~/.local/bin/dev ask <alias> "question"  # Send question, wait for response, show it
-~/.local/bin/dev recover <alias>         # Recover crashed session (claude --resume)
-~/.local/bin/dev history                 # Show recent task history
-~/.local/bin/dev health                  # Show CPU load, memory, session count
-~/.local/bin/dev cleanup                 # List idle workers that CAN be killed (does NOT kill)
-~/.local/bin/dev cleanup --confirm       # Actually kill all idle workers (ONLY after user approval)
+# Worker Management
+~/.local/bin/dev start <alias>             # Start Claude worker (default)
+~/.local/bin/dev start <alias> --qwen      # Start Qwen CLI worker
+~/.local/bin/dev start <alias> --dual      # Start DUAL: Claude← + Qwen→ side-by-side
+
+# Messaging (dual mode: --qwen targets right pane)
+~/.local/bin/dev send <alias> "message"           # Send to Claude (or default pane)
+~/.local/bin/dev send <alias> --qwen "message"    # Send to Qwen pane (dual mode)
+~/.local/bin/dev broadcast "message"              # Send to ALL active AI sessions
+
+# Monitoring (dual mode: --qwen reads right pane)
+~/.local/bin/dev peek <alias>              # Read worker's recent output (last 50 lines)
+~/.local/bin/dev peek <alias> --qwen       # Read Qwen pane output (dual mode)
+~/.local/bin/dev peek <alias> 100          # Read last 100 lines
+~/.local/bin/dev done <alias>              # Check if worker is idle or working
+~/.local/bin/dev wait <alias>              # Wait for worker to finish, then notify
+~/.local/bin/dev ask <alias> "question"    # Send question, wait for response, show it
+
+# Relay — pipe output between panes (dual mode)
+~/.local/bin/dev relay <alias> --to-qwen   # Send Claude←'s output to Qwen→
+~/.local/bin/dev relay <alias> --to-claude # Send Qwen→'s output to Claude←
+~/.local/bin/dev relay <alias> --swap      # Both directions simultaneously
+
+# Session Management
+~/.local/bin/dev kill <alias>              # Kill a project window
+~/.local/bin/dev list                      # List all projects and their status
+~/.local/bin/dev status                    # Show active windows, AI status ([claude]/[qwen]/[dual])
+~/.local/bin/dev recover <alias>           # Recover crashed session
+~/.local/bin/dev history                   # Show recent task history
+~/.local/bin/dev health                    # Show CPU load, memory, session count
+~/.local/bin/dev cleanup                   # List idle workers that CAN be killed (does NOT kill)
+~/.local/bin/dev cleanup --confirm         # Actually kill all idle workers (ONLY after user approval)
+
+# Spec-Driven Development
+~/.local/bin/dev spec create <alias> <feature>   # Create spec file at <project>/.orchestra/specs/<feature>.md
+~/.local/bin/dev spec show <alias> <feature>     # Print spec
+~/.local/bin/dev spec list <alias>               # List all specs for project
+~/.local/bin/dev spec inject <alias> <feature>   # Send spec to Claude← as context
+~/.local/bin/dev spec check <alias> <feature>    # Ask Claude to verify vs spec (SPEC_COMPLETE / SPEC_INCOMPLETE)
+
+# Loop with test gate
+~/.local/bin/dev loop <alias> [max] [--test-cmd "cmd"]  # plan→implement→[test]→review loop
 ```
 
 ## Resource Management (CRITICAL)
@@ -74,25 +100,160 @@ Track what was done, where we left off, what's next — survives session crashes
 
 ## Task Lifecycle (CRITICAL — follow this for EVERY task, NO EXCEPTIONS)
 
+### Single worker
 1. **Send task:** `dev send <alias> "detailed task description"`
-2. **Wait:** `sleep 20` — you MUST actually sleep, not just say you will
-3. **Check output:** `dev peek <alias>` to read the worker's response
-4. **Still working?** If worker is still busy, `sleep 15` and `dev peek` again. Repeat until done.
+2. **Wait:** `sleep N` — use judgment: quick tasks=15s, medium=45s, heavy=120s
+3. **Check output:** `dev peek <alias>` — OR use `dev wait <alias>` for smart polling
+4. **Still working?** `sleep 15` and `dev peek` again. Repeat until done.
 5. **Report to user:** Summarize what the worker did or said
-6. **Follow up if needed:** Send additional instructions based on worker output
 
-**YOU MUST FOLLOW UP. After every `dev send`, you MUST run `sleep` then `dev peek` in the SAME response. Do NOT say "I'll check later" or "bitince haber veririm" — check NOW. The user expects you to monitor workers autonomously without being asked.**
+### Dual worker (Claude← plans, Qwen→ codes)
+**Option A — Manual loop:**
+```bash
+dev send <alias> "Plan: describe what to build"          # Claude plans
+sleep 30 && dev peek <alias>                              # Read plan
+dev relay <alias> --to-qwen                               # Send plan to Qwen
+dev send <alias> --qwen "Implement the plan above. Say DONE when finished."
+sleep 120                                                  # ZERO TOKENS while Qwen codes
+dev peek <alias> --qwen                                   # Read result
+dev relay <alias> --to-claude && dev send <alias> "Review, list issues only"
+sleep 30 && dev peek <alias>                              # Read review
+# If issues: relay to Qwen and loop
+```
+
+**Option B — Automated loop:**
+```bash
+dev send <alias> "Plan: [describe feature]"              # Claude plans first
+sleep 30 && dev peek <alias>                             # Confirm plan is ready
+dev loop <alias> 5                                       # Auto plan→impl→review×5
+dev loop <alias> 5 --test-cmd "npm test"                 # Optional: add test gate (tests must pass before review)
+```
+
+**Optional: Spec-driven context**
+Use when the feature has clear acceptance criteria. Skip for simple tasks.
+```bash
+dev spec create <alias> <feature>                        # Creates <project>/.orchestra/specs/<feature>.md
+# Edit the spec file, fill in acceptance criteria
+dev spec inject <alias> <feature>                        # Send spec to Claude← before planning
+# Then continue with Option A or B as normal
+dev spec check <alias> <feature>                         # Optionally verify at the end: SPEC_COMPLETE or SPEC_INCOMPLETE
+```
+
+**YOU MUST FOLLOW UP. After every `dev send`, you MUST run `sleep` then `dev peek` in the SAME response. Do NOT say "I'll check later" — check NOW.**
+
+## Dual Mode — Task Routing (Claude← vs Qwen→)
+
+**CORE PRINCIPLE: Claude thinks, Qwen executes. NEVER have Claude write code.**
+
+### Role Split (NON-NEGOTIABLE)
+
+| Claude← | Qwen→ |
+|---------|-------|
+| Analyze the problem | Write the code |
+| Design the solution | Run commands |
+| Produce a step-by-step implementation plan | Apply the plan file by file |
+| Review Qwen's output, spot issues | Fix issues Claude flags |
+| Approve or reject | Test, lint, commit |
+
+Claude← **never** writes implementation code. It produces plans and reviews.
+Qwen→ **never** decides architecture. It executes and reports.
+
+### Standard Dual Loop (repeat until done)
+
+```
+1. Qwen→ scouts:     dev send <alias> --qwen "git status && <analyze command>"
+   sleep 15
+   dev peek <alias> --qwen
+
+2. Relay to Claude:  dev relay <alias> --to-claude
+   Claude← plans:   dev send <alias> "Based on Qwen's findings, produce a detailed
+                     step-by-step implementation plan. List every file to change and
+                     exactly what to do. Do NOT write code yourself."
+   sleep 30
+   dev peek <alias>
+
+3. Relay to Qwen:    dev relay <alias> --to-qwen
+   Qwen→ implements: dev send <alias> --qwen "Follow the plan above exactly. Implement
+                     all changes, run tests, fix any errors. Report when done."
+   sleep 60          ← zero tokens while Qwen codes
+   dev peek <alias> --qwen
+
+4. Relay to Claude:  dev relay <alias> --to-claude
+   Claude← reviews: dev send <alias> "Review Qwen's implementation. List any issues,
+                     missing cases, or bugs. Do NOT fix them yourself — list them."
+   sleep 20
+   dev peek <alias>
+
+5. If issues found → relay to Qwen → Qwen fixes → loop back to step 4
+   If approved     → Qwen commits → done
+```
+
+### Who does what — quick reference
+
+**Send to Claude← when:**
+- "Analyze this error and produce a fix plan"
+- "Design the architecture for X"
+- "Review what Qwen implemented and list issues"
+- "Break this feature into implementation steps"
+
+**Send to Qwen→ when:**
+- "Implement the plan above"
+- "Run flutter analyze / npm test / pytest"
+- "Fix the issues Claude listed"
+- "git add, commit, push"
+- "Read file X and report its contents"
+- Any shell command, file write, or code edit
+
+### Sleep pattern (zero token parallelism)
+```bash
+dev send <alias> --qwen "implement..."   # Qwen starts coding
+sleep 120                                 # FREE — zero tokens while Qwen works
+dev peek <alias> --qwen                  # Check result once
+```
+
+### When NOT to use dual:
+- Simple projects with light workload — single Qwen is usually enough
+- When system is under resource pressure — dual counts as 2 sessions
+
+## Worker Model (CRITICAL)
+
+**Claude workers MUST always use Sonnet.** Before sending any task to a Claude worker, verify the model:
+
+```bash
+dev send <alias> "/model claude-sonnet-4-6"   # Set model on first use
+```
+
+If a worker is already running and model is unknown, set it explicitly. Never let workers default to Opus — Sonnet is faster and sufficient for implementation tasks. Opus is reserved for orchestrator-level reasoning only (this session).
+
+---
+
+## Context Management
+
+**When to compact:**
+- Every 30+ peeks in a session (~45 min of active orchestration)
+- Before starting a new unrelated feature
+- When orchestrator responses slow down noticeably
+
+**How to compact:**
+1. `dev state log <project> "summary of work done"` — persist state for all active projects
+2. Start a fresh conversation
+3. On resumption: `dev state show --all` to reload all project context
+
+**Orchestrator context tip:** `dev peek` output goes into YOUR context. Use `dev done <project>` (status only, no output injection) when you only need to know if a worker is finished.
+
+---
 
 ## Rules
 
-- **Max 3 active Claude sessions.** The script enforces this, but also check with `dev status`.
+- **Max 5 active AI sessions.** The script enforces this. Dual mode counts as 2.
 - **Use `dev list` for project registry.** No hardcoded project list — `dev list` is the single source of truth.
 - **Include full context in every message to workers.** Workers have zero knowledge of this conversation. Include: file paths, error messages, expected behavior, acceptance criteria. Never send vague messages like "fix the bug."
-- **`dev send` only works on windows running Claude.** It will error if Claude is not running.
-- **`dev broadcast` only targets Claude windows.** Shell-only windows are automatically skipped.
-- **`dev start` waits for readiness.** It polls until Claude is running and reports the window number.
+- **`dev send` only works on windows running an AI.** It will error if no AI is running.
+- **`dev broadcast` targets all AI windows** (Claude + Qwen). Shell-only windows are skipped.
+- **`dev start` waits for readiness.** It polls until AI is running and reports the window number.
 - **Always tell the user the window number** after starting or sending: "Sent to myapp [window 3] — Ctrl+A 3 to check manually."
 - **`dev peek` output may have missing characters** due to TUI rendering. Read for meaning, not exact characters.
+- **In dual mode, default is Claude←.** Always specify `--qwen` explicitly for Qwen pane.
 
 ## Architecture
 
@@ -131,15 +292,15 @@ When the user gives a HIGH-LEVEL goal instead of specific tasks, YOU decompose i
 User: "Projeleri release'e hazırla"
 
 You analyze:
-  OML: 4 open issues, 1 unpushed commit, no TestFlight build
-  Invoice: Stripe fixes done, needs version bump + deploy
-  wcore: 3 PRs open, verify suite passing, needs merge + tag
+  mobile-app: 4 open issues, 1 unpushed commit, no mobile release build
+  webapp: payment fixes done, needs version bump + deploy
+  backend: 3 PRs open, test suite passing, needs merge + tag
 
 You present:
   "Release plan:
-   1. wcore: merge 3 PRs → version bump → tag → push (10 min)
-   2. Invoice: version bump → deploy → Codemagic build (15 min)
-   3. OML: fix 4 issues → push → Codemagic build (30 min)
+   1. backend: merge 3 PRs → version bump → tag → push (10 min)
+   2. webapp: version bump → deploy → CI build (15 min)
+   3. mobile-app: fix 4 issues → push → CI build (30 min)
    Approve?"
 
 User: "Ok"
@@ -153,27 +314,54 @@ You execute: Start workers, send tasks, monitor, report.
 - Don't go fully autonomous — always get approval for the plan
 - Don't change the plan mid-execution without telling the user
 
-## Example Workflow
+## Example Workflows
 
+### Single worker (Claude or Qwen)
 ```
-# User: "Let's work on myapp and backend"
-# You run:
-dev start myapp      → Ready: myapp [window 1]
-dev start backend    → Ready: backend [window 2]
+dev start myapp              → Ready: myapp [claude] [window 1]
+dev start backend --qwen     → Ready: backend [qwen] [window 2]
 
-# User: "Fix the login bug in myapp"
-# You run:
-dev send myapp "There is a bug in the login screen. Check src/auth/login.ts. The session token is not refreshed on expiry. Find and fix it."
+dev send myapp "Fix the login bug in src/auth/login.ts"
 sleep 15
-dev peek myapp       → Read worker's response, summarize to user
+dev peek myapp               → Summarize to user
+```
 
-# User: "Run tests in all projects"
-# You run:
-dev broadcast "Run the test suite and report any failures."
+### Dual worker (Claude← + Qwen→)
+```
+dev start myapp --dual       → Ready: myapp [dual: claude← qwen→] [window 1]
+
+# Step 1: Qwen scouts
+dev send myapp --qwen "git status && flutter analyze 2>&1 | tail -10"
+sleep 15
+dev peek myapp --qwen        → "3 warnings found in auth_service.dart"
+
+# Step 2: Relay to Claude, Claude PLANS (does NOT write code)
+dev relay myapp --to-claude
+dev send myapp "Qwen found 3 analyzer warnings (see above). Produce a step-by-step
+fix plan: which file, which line, what change. Do NOT implement — plan only."
 sleep 20
-dev peek myapp       → Read and summarize
-dev peek backend     → Read and summarize
+dev peek myapp               → Claude's plan
 
-# User: "Stop myapp"
-dev kill myapp
+# Step 3: Relay plan to Qwen, Qwen implements
+dev relay myapp --to-qwen
+dev send myapp --qwen "Follow Claude's plan above. Fix all 3 warnings, run
+flutter analyze to verify clean, then commit."
+sleep 60                     # ← zero tokens while Qwen codes
+dev peek myapp --qwen        → Qwen's result
+
+# Step 4: Claude reviews
+dev relay myapp --to-claude
+dev send myapp "Review what Qwen did. Any issues? List them — do not fix."
+sleep 20
+dev peek myapp               → Approved or issues found
+
+# If issues → relay to Qwen → Qwen fixes → back to step 4
+```
+
+### Mixed fleet
+```
+dev start backend --dual     → Claude← deep work + Qwen→ quick scans
+dev start webapp             → Claude only (complex business logic)
+dev start mobile-app --qwen  → Qwen only (simple issue triage)
+dev status                   → Shows [dual] [claude] [qwen] per worker
 ```
