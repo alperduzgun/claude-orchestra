@@ -1,12 +1,12 @@
 # Dev Orchestra
 
-A tmux-based multi-agent AI orchestrator that manages Claude Code and Qwen Code workers from a single terminal. Orchestrate complex tasks across projects with token-efficient sleep patterns, role-separated dual mode (Claude plans / Qwen codes), and persistent project state.
+A tmux-based multi-agent AI orchestrator that manages Claude Code, Kimi CLI, Codex, Qwen, and Gemini workers from a single terminal. Orchestrate complex tasks across projects with token-efficient sleep patterns, role-separated dual mode (e.g. Claude plans / Kimi codes), and persistent project state.
 
 **Key principles:**
 - `sleep N` = zero tokens consumed while workers execute
-- Claude thinks and reviews. Qwen writes code and runs commands.
-- Project state persists across session crashes and terminal restarts
-- Up to 5 simultaneous AI sessions across any number of projects
+- Dual mode picks any AI combination: `claude + kimi`, `claude + codex`, `claude + qwen`, etc.
+- One agent thinks and reviews. The other writes code and runs commands.
+- Up to 3 simultaneous AI sessions (configurable via `MAX_AI_SESSIONS`)
 
 ---
 
@@ -15,7 +15,7 @@ A tmux-based multi-agent AI orchestrator that manages Claude Code and Qwen Code 
 ```
 tmux session: devenv
 ├── Window 0  → Orchestrator (you issue commands here)
-├── Window 1  → Project worker (claude / qwen / dual)
+├── Window 1  → Project worker (single AI or dual pane)
 ├── Window 2  → Project worker
 └── ...
 ```
@@ -24,9 +24,20 @@ tmux session: devenv
 
 | Type | Composition | Use Case |
 |------|-------------|----------|
-| `claude` | Single pane, Claude Code | Complex reasoning, analysis, reviews |
-| `qwen` | Single pane, Qwen Code | Fast implementation, scripting, quick fixes |
-| `dual` | Two panes: Claude← (left) + Qwen→ (right) | Plan → implement → review loops |
+| Single AI | One pane running claude, kimi, codex, qwen, or gemini | Focused work with one agent |
+| `dual` | Two panes, any AI combination on left/right | Plan → implement → review loops |
+
+**Dual mode syntax:**
+
+```bash
+dev start <project> --dual [left] [right]
+#   left/right ∈ {claude, codex, kimi, qwen, gemini}
+#   default: claude + codex
+
+dev start myapp --dual claude kimi      # Claude← + Kimi→
+dev start myapp --dual claude codex     # Claude← + Codex→ (default --dual)
+dev start myapp --dual claude qwen      # Claude← + Qwen→
+```
 
 Navigate windows with `Ctrl+A <number>` or `Ctrl+A w`.
 
@@ -42,8 +53,11 @@ Navigate windows with `Ctrl+A <number>` or `Ctrl+A w`.
 | tmux | 3.0+ | `brew install tmux` |
 | Node.js | 18+ | `nvm install 20` or `brew install node` |
 | Claude Code | 2.0+ | `npm i -g @anthropic-ai/claude-code` |
-| Qwen Code | 0.13+ | `npm i -g @qwen-ai/qwen-code` *(optional for dual mode)* |
-| GitHub CLI | 2.0+ | `brew install gh` *(optional, for `dev analyze`)* |
+| Kimi CLI | latest | `uv tool install kimi-cli` *(optional, dual mode)* |
+| Codex CLI | latest | `npm i -g @openai/codex` *(optional)* |
+| Qwen Code | 0.13+ | `npm i -g @qwen-ai/qwen-code` *(optional)* |
+| Gemini CLI | latest | `npm i -g @google/gemini-cli` *(optional)* |
+| GitHub CLI | 2.0+ | `brew install gh` *(recommended)* |
 
 ### Quick install (recommended)
 
