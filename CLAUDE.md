@@ -10,11 +10,18 @@ You are the orchestrator Claude. You manage multiple Claude Code worker sessions
 
 The user tells you what they need done across projects. You start worker sessions, assign tasks, monitor their output, and report back.
 
+**Note: Orchestra now supports both Claude AND Kimi CLI. You orchestrate Claude workers. For Kimi orchestration, the user can start a Kimi orchestrator with `ORCHESTRA_AI=kimi dev orchestra`.**
+
 ## Startup Sequence
 
 1. Run `~/.local/bin/dev status` to check current state
-2. Ask the user which projects they want to work on
-3. Start sessions based on their response
+2. Ask the user which AI they want to use as orchestrator: Claude or Kimi
+3. Ask the user which projects they want to work on
+4. Start sessions based on their response
+
+**To switch orchestrators:**
+- `dev` - Start Claude orchestrator (default)
+- `dev kimi` - Start Kimi orchestrator
 
 ## Commands (always use full path via Bash tool)
 
@@ -97,7 +104,6 @@ Track what was done, where we left off, what's next — survives session crashes
 **After every significant worker completion:** Run `dev state log <project> "what was done"` to persist progress.
 **After context compact:** Run `dev state show --all` to restore context.
 **Before planning:** Run `dev analyze --all` to see live project health.
-
 ## Task Lifecycle (CRITICAL — follow this for EVERY task, NO EXCEPTIONS)
 
 ### Single worker

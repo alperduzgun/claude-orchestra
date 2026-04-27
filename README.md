@@ -1,425 +1,260 @@
-# Dev Orchestra
+<p align="center">
+  <img src="assets/claude-orchestra-orc-conductor-banner.png" alt="Claude Orchestra - AI-powered multi-session orchestrator for Claude Code with tmux" width="100%">
+</p>
 
-A tmux-based multi-agent AI orchestrator that manages Claude Code, Kimi CLI, Codex, Qwen, and Gemini workers from a single terminal. Orchestrate complex tasks across projects with token-efficient sleep patterns, role-separated dual mode (e.g. Claude plans / Kimi codes), and persistent project state.
+<p align="center">
+  <strong>Manage multiple Claude Code AND Kimi CLI sessions from a single terminal.</strong><br>
+  One orchestrator AI controls worker AI sessions across your projects via tmux.
+</p>
 
-**Key principles:**
-- `sleep N` = zero tokens consumed while workers execute
-- Dual mode picks any AI combination: `claude + kimi`, `claude + codex`, `claude + qwen`, etc.
-- One agent thinks and reviews. The other writes code and runs commands.
-- Up to 3 simultaneous AI sessions (configurable via `MAX_AI_SESSIONS`)
-
----
-
-## Architecture
-
-```
-tmux session: devenv
-├── Window 0  → Orchestrator (you issue commands here)
-├── Window 1  → Project worker (single AI or dual pane)
-├── Window 2  → Project worker
-└── ...
-```
-
-### Worker Types
-
-| Type | Composition | Use Case |
-|------|-------------|----------|
-| Single AI | One pane running claude, kimi, codex, qwen, or gemini | Focused work with one agent |
-| `dual` | Two panes, any AI combination on left/right | Plan → implement → review loops |
-
-**Dual mode syntax:**
-
-```bash
-dev start <project> --dual [left] [right]
-#   left/right ∈ {claude, codex, kimi, qwen, gemini}
-#   default: claude + codex
-
-dev start myapp --dual claude kimi      # Claude← + Kimi→
-dev start myapp --dual claude codex     # Claude← + Codex→ (default --dual)
-dev start myapp --dual claude qwen      # Claude← + Qwen→
-```
-
-Navigate windows with `Ctrl+A <number>` or `Ctrl+A w`.
+<p align="center">
+  <a href="#install">Install</a> &bull;
+  <a href="#usage">Usage</a> &bull;
+  <a href="#commands">Commands</a> &bull;
+  <a href="https://github.com/alperduzgun/claude-orchestra/releases">Releases</a>
+</p>
 
 ---
 
-## Installation
+## Quick Start (for AI Assistants)
 
-### Prerequisites
+Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up Claude Orchestra automatically:
 
-| Tool | Version | Install |
-|------|---------|---------|
-| zsh | 5.0+ | Built-in on macOS |
-| tmux | 3.0+ | `brew install tmux` |
-| Node.js | 18+ | `nvm install 20` or `brew install node` |
-| Claude Code | 2.0+ | `npm i -g @anthropic-ai/claude-code` |
-| Kimi CLI | latest | `uv tool install kimi-cli` *(optional, dual mode)* |
-| Codex CLI | latest | `npm i -g @openai/codex` *(optional)* |
-| Qwen Code | 0.13+ | `npm i -g @qwen-ai/qwen-code` *(optional)* |
-| Gemini CLI | latest | `npm i -g @google/gemini-cli` *(optional)* |
-| GitHub CLI | 2.0+ | `brew install gh` *(recommended)* |
+```
+Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
 
-### Quick install (recommended)
+Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code) OR Kimi CLI (https://github.com/moonshot-ai/kimi-cli)
+Recommended: Ghostty terminal (https://ghostty.org/) for auto-restore and Cmd+number window switching
+
+Steps:
+1. Install prerequisites if missing:
+   - macOS: brew install tmux zsh && brew install --cask ghostty
+   - Linux: apt install tmux zsh (Ghostty: https://ghostty.org/download)
+2. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
+3. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
+4. The installer installs scripts to ~/.local/bin/ and copies config to ~/.config/orchestra/
+   It will ask about these optional features — say yes to all for the full experience:
+   - Ghostty auto-restore (reattach to orchestra session on terminal launch)
+   - Ghostty Cmd+number keybindings (Cmd+0 for orchestrator, Cmd+1-9 for workers)
+   - tmux config (Catppuccin theme, Ctrl+A prefix, status bar with worker indicators, vim navigation)
+5. If ~/.local/bin is not in PATH, add to shell profile: export PATH="$HOME/.local/bin:$PATH"
+6. Add my projects with `dev add <alias> <path>` for each project I want to manage
+7. Run `dev` to start the Claude orchestrator, or `dev kimi` to start the Kimi orchestrator
+8. Read ~/claude-orchestra/README.md and verify nothing was missed — check PATH, Ghostty config, tmux config, and all optional features are properly set up.
+
+Refer to the README for the full command reference.
+```
+
+---
+
+## How it works
+
+```
+Ghostty / Terminal
+└── tmux session: "devenv"
+    ├── Window 0: Orchestra (you talk to this AI - Claude or Kimi)
+    ├── Window 1: project-a (worker AI)
+    ├── Window 2: project-b (worker AI)
+    └── Window 3: project-c (worker AI)
+```
+
+**Orchestrator Options:**
+- `dev` → Claude orchestrator (default)
+- `dev kimi` → Kimi orchestrator
+
+**Worker Options:**
+- `dev start <project>` → Start Claude worker
+- `dev kimi start <project>` → Start Kimi worker
+
+- You tell the orchestrator what to do across projects
+- It starts worker sessions and assigns tasks
+- Switch to any window with `Ctrl+A <number>` for manual control
+- Max 3 concurrent AI sessions (Claude + Kimi combined, configurable, RAM-dependent)
+- Close Ghostty and reopen — session resumes where you left off
+- Mix and match: Claude orchestrator can control Kimi workers and vice versa!
+
+### Prompt Amplification
+
+The orchestrator doesn't just forward your messages — it **amplifies** them. You give a brief, high-level instruction; the orchestrator translates it into a detailed, context-rich task for each worker.
+
+```
+You:            "check for false positives"
+
+Orchestrator:   "14 fixes were applied. Cross-reference each against source:
+                 1. dev:16 — verify ORCHESTRA_DIR controls CLAUDE.md path
+                 2. dev:760 — verify case statement has claude|cc
+                 3. install.sh:88 — verify interactive Ghostty prompt exists
+                 ...
+                 Return CORRECT or FALSE POSITIVE for each with explanation."
+```
+
+Workers have zero context about your conversation. The orchestrator bridges this gap by injecting file paths, line numbers, error messages, and acceptance criteria into every task — so you can stay high-level while workers get exactly what they need.
+
+## Requirements
+
+- macOS or Linux
+- [tmux](https://github.com/tmux/tmux) 3.0+
+- [zsh](https://www.zsh.org/)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) AND/OR [Kimi CLI](https://github.com/moonshot-ai/kimi-cli)
+- [Ghostty](https://ghostty.org/) (recommended, for auto-restore)
+
+## Install
 
 ```bash
-# 1. Install dependencies
-brew install tmux gh
-npm i -g @anthropic-ai/claude-code
-claude login
-
-# 2. Clone and run installer
-git clone https://github.com/alperduzgun/claude-orchestra.git ~/.config/orchestra
-cd ~/.config/orchestra
+git clone https://github.com/alperduzgun/claude-orchestra.git
+cd claude-orchestra
+chmod +x install.sh
 ./install.sh
-
-# 3. Add to PATH (if installer printed the note)
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-
-# 4. Verify
-dev help
 ```
 
-`install.sh` symlinks `dev` into `~/.local/bin`, creates `~/.config/orchestra/projects.conf`, and checks prerequisites.
+The installer will:
+1. Install `dev` to `~/.local/bin/` (symlinked from repo)
+2. Copy the orchestrator prompts (`CLAUDE.md` and `KIMI.md`) to `~/.config/orchestra/`
+3. Create config at `~/.config/orchestra/projects.conf`
+4. **Ask** if you want Ghostty auto-restore (adds `command` to Ghostty config — works for all tabs/windows)
+5. **Ask** if you want Ghostty Cmd+number keybindings (switch windows with Cmd+0, Cmd+1...)
+6. **Ask** if you want orchestra tmux config (Catppuccin theme, Ctrl+A prefix, worker status bar, vim navigation, window-size fix — backs up existing config)
 
-### Manual setup
+## Setup
+
+Add your projects:
 
 ```bash
-# If you prefer not to run install.sh
-git clone https://github.com/alperduzgun/claude-orchestra.git ~/.config/orchestra
-mkdir -p ~/.local/bin
-ln -s ~/.config/orchestra/dev ~/.local/bin/dev
-
-# Optional: dual-mode needs Qwen Code
-npm i -g @qwen-ai/qwen-code
+dev add myapp ~/Development/my-app
+dev add backend ~/projects/api-server
+dev add frontend ~/code/web-app
 ```
 
-### Configure Projects
+Projects are stored in `~/.config/orchestra/projects.conf`.
+
+## Usage
 
 ```bash
-# Add projects to the registry
-dev add myapp /Users/yourname/Development/myapp
-dev add backend /Users/yourname/Development/backend
+# Start the orchestrator
+## Claude orchestrator (default)
+dev                      # shortest
+dev o                    # short alias  
+dev orchestra            # full command
 
-# Or edit directly
-nano ~/.config/orchestra/projects.conf
-# Format: alias=/path/to/project
+## Kimi orchestrator
+dev kimi                 # Start Kimi as orchestrator
+
+# The orchestrator asks which projects to work on
+# You say: "myapp and backend"
+# It runs: dev start myapp && dev start backend (or dev kimi start ...)
+
+# Or manually:
+dev start myapp          # Start Claude for a project
+dev kimi start myapp     # Start Kimi for a project
+dev send myapp "fix X"   # Send a task (auto-detects Claude/Kimi)
+dev broadcast "run tests" # Send to all active AI sessions
+dev status               # See what's running
+dev kill myapp           # Stop a project session
+dev list                 # All projects and their status
 ```
 
----
+### Navigation
 
-## Quick Start
+| Key | Action | Requires |
+|-----|--------|----------|
+| `Ctrl+A 0` | Switch to orchestrator | tmux (default) |
+| `Ctrl+A 1` | Switch to first project | tmux (default) |
+| `Ctrl+A w` | List all windows | tmux (default) |
+| `Cmd+0` | Switch to orchestrator | Ghostty + keybindings |
+| `Cmd+1` | Switch to first project | Ghostty + keybindings |
+
+> **Note:** `Cmd+number` keybindings require the Ghostty config from `ghostty.example.conf` and tmux prefix set to `Ctrl+A`. See the example config for details.
+
+### Monitoring & Automation
 
 ```bash
-# Check all sessions
-dev status
-
-# Start a Claude worker
-dev start myapp
-
-# Send a task, wait, check output
-dev send myapp "Fix the auth bug in src/auth.ts — error: 'user is undefined'"
-sleep 30
-dev peek myapp
-
-# Start dual mode (Claude plans, Qwen codes)
-dev start backend --dual
+dev peek myapp           # Read worker's recent output
+dev watch myapp          # Live tail of worker's log
+dev done myapp           # Check if worker is idle or working
+dev wait myapp           # Wait for worker to finish (default: 5min timeout)
+dev ask myapp "question" # Send question, wait for response (2min timeout)
+dev run myapp "task"     # Non-interactive task (claude --print)
+dev history              # Show recent task history (default: last 30)
+dev recover myapp        # Recover crashed session (--resume)
+dev recover --all        # Recover all crashed sessions
 ```
 
----
+## Session Restore
 
-## Commands Reference
+When Ghostty auto-restore is enabled (via installer), closing and reopening Ghostty automatically reattaches to your orchestra session. All AI workers (Claude and/or Kimi) continue running in the background via tmux.
 
-### Worker Management
+```
+Close Ghostty → tmux session persists → Reopen Ghostty → auto-reattach
+```
 
-| Command | Flags | Description |
-|---------|-------|-------------|
-| `dev start <alias>` | | Start Claude worker |
-| | `--qwen` | Start Qwen worker |
-| | `--dual` | Start dual worker (Claude← + Qwen→) |
-| `dev kill <alias>` | | Kill a project window |
-| `dev recover <alias>` | | Recover crashed session |
-| | `--all` | Recover all crashed sessions |
-| `dev list` | | Show all configured projects |
-| `dev status` | | Show active windows and AI status |
-
-### Messaging
-
-| Command | Flags | Description |
-|---------|-------|-------------|
-| `dev send <alias> "msg"` | | Send to Claude (default) |
-| | `--qwen` | Send to Qwen pane (dual mode) |
-| `dev broadcast "msg"` | | Send to all active AI workers |
-| `dev ask <alias> "q"` | | Send question, wait for response, show it |
-
-### Monitoring
-
-| Command | Flags | Description |
-|---------|-------|-------------|
-| `dev peek <alias>` | | Read last 50 lines of output |
-| | `--qwen` | Read Qwen pane (dual mode) |
-| | `<N>` | Read last N lines |
-| `dev done <alias>` | | Check if worker is idle (no context injection) |
-| `dev wait <alias>` | | Block until worker finishes; send desktop notification |
-| `dev watch <alias>` | | Live tail of worker log |
-
-### Relay (Dual Mode)
-
-| Command | Flags | Description |
-|---------|-------|-------------|
-| `dev relay <alias>` | `--to-qwen` | Pipe Claude's output to Qwen |
-| | `--to-claude` | Pipe Qwen's output to Claude |
-| | `--swap` | Both directions simultaneously |
-
-### Project State & Analysis
-
-| Command | Description |
-|---------|-------------|
-| `dev state show [alias\|--all]` | Show last action, next todo, blockers, history |
-| `dev state log <alias> "action"` | Log what was done; persists across restarts |
-| `dev state set <alias> <key> <val>` | Set state field (`next_todo`, `blockers`, etc.) |
-| `dev state clear <alias>` | Reset all state for a project |
-| `dev analyze <alias>` | Live health: git status, open issues, PRs, codebase type |
-| `dev analyze --all` | Summary table for all projects |
-
-### Resource Management
-
-| Command | Flags | Description |
-|---------|-------|-------------|
-| `dev health` | | CPU load, memory free, session count |
-| `dev cleanup` | | List idle workers (does NOT kill) |
-| | `--confirm` | Kill all idle workers (only after user approval) |
-| `dev history [alias] [n]` | | Show recent task history |
-
----
-
-## Dual Mode
-
-### Core Principle
-
-> **Claude thinks, Qwen executes. Claude never writes code. Qwen never decides architecture.**
-
-| Claude← (Planner / Reviewer) | Qwen→ (Executor) |
-|------------------------------|-----------------|
-| Analyze the problem | Write the code |
-| Design the solution | Run commands (tests, builds, lints) |
-| Produce step-by-step plans | Apply the plan file by file |
-| Review Qwen's output; spot bugs | Fix issues Claude flags |
-| Approve or reject | git add, commit, push |
-
-### Standard Dual Loop
+To enable manually:
 
 ```bash
-# 1. Qwen scouts
-dev send <alias> --qwen "git status && flutter analyze 2>&1 | tail -10"
-sleep 15 && dev peek <alias> --qwen
+# Add to ~/.config/ghostty/config:
+command = ~/.local/bin/orchestra-attach
 
-# 2. Claude plans (does NOT write code)
-dev relay <alias> --to-claude
-dev send <alias> "Based on Qwen's output, produce a step-by-step implementation plan.
-List every file to change and exactly what to do. Do NOT implement — plan only."
-sleep 30 && dev peek <alias>
-
-# 3. Qwen implements
-dev relay <alias> --to-qwen
-dev send <alias> --qwen "Follow the plan above exactly. Implement all changes, run
-tests, fix any errors. Report when done."
-sleep 60                     # ← zero tokens while Qwen codes
-dev peek <alias> --qwen
-
-# 4. Claude reviews
-dev relay <alias> --to-claude
-dev send <alias> "Review what Qwen implemented. List any issues — do NOT fix them."
-sleep 20 && dev peek <alias>
-
-# 5. If issues → relay to Qwen → Qwen fixes → back to step 3
-#    If approved → Qwen commits → done
+# Add to ~/.tmux.conf (prevents size conflicts with multiple windows):
+set -g window-size latest
 ```
-
-### Automated Loop
-
-```bash
-dev start myapp --dual
-dev send myapp "Plan: add rate limiting to POST /api/users — 10 req/min per IP"
-sleep 30 && dev peek myapp          # Confirm plan is ready
-dev loop myapp 5                    # Auto plan→implement→review × 5 iterations
-dev loop myapp 5 --test-cmd "npm test"  # With test gate: tests must pass before review
-```
-
----
-
-## Spec-Driven Development
-
-Define acceptance criteria before coding. Workers implement exactly what the spec says — nothing more.
-
-### Workflow
-
-```bash
-# 1. Create spec
-dev spec create myapp rate-limit
-
-# 2. Edit it
-nano ~/Development/myapp/.orchestra/specs/rate-limit.md
-
-# 3. Inject into Claude as context
-dev spec inject myapp rate-limit
-
-# 4. Run the loop — Claude knows the spec, Qwen implements to it
-dev loop myapp 5 --test-cmd "npm test"
-
-# 5. Verify implementation against spec
-dev spec check myapp rate-limit
-dev peek myapp   # Claude outputs SPEC_COMPLETE or SPEC_INCOMPLETE
-```
-
-### Spec Format
-
-```markdown
-## Feature: rate-limit
-## Acceptance Criteria:
-- [ ] POST /api/login rate-limited to 10 req/min per IP
-- [ ] Returns 429 with Retry-After header when limit exceeded
-- [ ] Uses Redis as the backing store
-- [ ] Gracefully degrades to allow-all if Redis is unreachable
-## Out of Scope:
-- Per-user rate limits (only per-IP)
-## Constraints / Notes:
-- Must not add latency > 5ms on the happy path
-```
-
-### Spec Commands
-
-| Command | Description |
-|---------|-------------|
-| `dev spec create <alias> <feature>` | Create a blank spec file in project |
-| `dev spec show <alias> <feature>` | Print the spec |
-| `dev spec list <alias>` | List all specs for a project |
-| `dev spec inject <alias> <feature>` | Send spec to Claude as context |
-| `dev spec check <alias> <feature>` | Ask Claude to verify implementation vs spec |
-
-Specs live at `<project-dir>/.orchestra/specs/<feature>.md`.
-
----
-
-## Token Efficiency
-
-### The Sleep Pattern
-
-```bash
-dev send <alias> --qwen "implement feature X"   # Qwen starts
-sleep 120                                        # ← zero tokens
-dev peek <alias> --qwen                         # read once
-```
-
-`sleep N` consumes zero tokens. The orchestrator context stays clean. Each `dev peek` injects ~50 lines (~5KB) into context — use it deliberately.
-
-### `dev done` vs `dev peek`
-
-| Command | Context Impact | Use When |
-|---------|---------------|----------|
-| `dev peek <alias>` | ~5KB injected | You need to read output |
-| `dev done <alias>` | Zero | You only need to know if worker is finished |
-| `dev wait <alias>` | Zero (notified) | Heavy tasks; you'll work on something else |
-
-**Pattern:** `sleep 120 && dev done <alias>` — zero context injection during execution.
-
----
-
-## Task Decomposition
-
-For high-level goals, the orchestrator decomposes before executing:
-
-1. User: `"Get all projects release-ready"`
-2. Orchestrator analyzes each project (`dev analyze --all`)
-3. Proposes Pareto-ordered plan (highest impact, lowest effort first)
-4. **User approves**
-5. Orchestrator dispatches tasks to workers, monitors, reports milestones
-
-**Rules:**
-- Always present the plan before executing — never fully autonomous
-- Pareto order: impact ÷ effort, highest first
-- Cross-project deps: finish dependencies first
-- Report after every sub-task completes
-
----
 
 ## Configuration
 
-### Environment Variables
+Environment variables (set in your shell profile):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCHESTRA_SESSION` | `devenv` | tmux session name |
-| `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Config and state directory |
-| `ORCHESTRA_DIR` | `~/.config/orchestra` | Orchestrator CLAUDE.md location |
-| `CLAUDE_BIN` | `$(which claude)` | Path to Claude Code binary |
-| `QWEN_BIN` | `$(which qwen)` | Path to Qwen Code binary |
-| `MAX_CLAUDE_SESSIONS` | `5` | Max concurrent AI sessions (enforced) |
+| `ORCHESTRA_DIR` | `~/.config/orchestra` | Where `CLAUDE.md`/`KIMI.md` lives (orchestrator working directory) |
+| `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Where `projects.conf` lives (can differ from `ORCHESTRA_DIR`) |
+| `ORCHESTRA_AI` | `claude` | Orchestrator AI type: `claude` or `kimi` |
+| `MAX_AI_SESSIONS` | `3` | Max concurrent AI sessions (Claude + Kimi combined) |
+| `CLAUDE_BIN` | auto-detected | Path to Claude Code binary |
+| `KIMI_BIN` | auto-detected | Path to Kimi CLI binary |
 
-### File Layout
+> **Note:** `ORCHESTRA_DIR` and `ORCHESTRA_CONFIG_DIR` default to the same path but serve different purposes. `ORCHESTRA_DIR` controls where the orchestrator AI runs and reads its system prompt. `ORCHESTRA_CONFIG_DIR` controls where the project registry is stored.
 
-```
-~/.config/orchestra/
-├── projects.conf          # Project registry (alias=path)
-├── CLAUDE.md              # Orchestrator system prompt
-├── states/                # Per-project state files
-│   └── myapp.state
-└── worker_types/          # Per-window worker type (claude/qwen)
-    └── myapp
+## Commands
 
-~/.local/share/orchestra/
-├── history.log            # Task history
-└── logs/                  # Worker session logs (auto-rotated >100MB)
+| Command | Description |
+|---------|-------------|
+| `dev` / `dev o` / `dev orch` / `dev orchestra` | Start the orchestrator (default: Claude) |
+| `ORCHESTRA_AI=kimi dev` | Start Kimi orchestrator |
+| `dev start <project>` | Start Claude in a tmux window |
+| `dev kimi start <project>` | Start Kimi in a tmux window |
+| `dev send <project> "msg"` | Send message to a project's AI (auto-detects Claude/Kimi) |
+| `dev peek <project> [lines]` | Read worker's recent output (default: 50 lines) |
+| `dev watch <project>` | Live tail of worker's log |
+| `dev done <project>` | Check if worker is idle or working |
+| `dev wait <project> [sec]` | Wait for worker to finish, then notify (default: 300s) |
+| `dev ask <project> "msg"` | Send question, wait for response (timeout: 120s) |
+| `dev run <project> "task"` | Non-interactive task (claude --print) |
+| `dev broadcast "msg"` | Send to all active AI sessions (Claude + Kimi) |
+| `dev history [alias] [n]` | Show recent task history (default: 30 lines) |
+| `dev recover <project>` | Recover crashed session |
+| `dev recover --all` | Recover all crashed sessions |
+| `dev status` | Show active windows and AI status |
+| `dev list` / `dev ls` | List all configured projects |
+| `dev add <alias> <path>` | Add a project |
+| `dev remove <alias>` / `dev rm <alias>` | Remove a project |
+| `dev notify <title> <msg>` | Send a desktop notification (macOS + Linux) |
+| `dev kill <project>` | Kill a project window |
+| `dev cc <project>` / `dev claude <project>` | Open Claude directly (no orchestration) |
+| `dev <project>` | Open a shell in the project |
+| `dev help` | Show help |
 
-~/.local/bin/
-└── dev                    # The orchestrator script
-```
+## Safety
 
----
+- `dev send` only delivers to windows running AI (Claude or Kimi) — never to a bare shell
+- `dev broadcast` skips non-AI windows automatically
+- Session limit is enforced in the script (not just documentation)
+- AI readiness is verified before sending (polls for process, max 15s)
+- Messages >1000 chars use tmux buffer (avoids PTY silent truncation at 1024 bytes)
+- Installer never overwrites existing configs — asks before modifying
+- Alias names validated (alphanumeric, hyphens, underscores only)
+- `CLAUDE_BIN` and `KIMI_BIN` quoted in all tmux commands (injection prevention)
+- Notifications use safe argv passthrough (no shell interpolation)
+- AI type is tracked per window for proper recovery
 
-## Worker Model
+## License
 
-**Claude workers must always use Sonnet.** Set on first use:
-
-```bash
-dev send <alias> "/model claude-sonnet-4-6"
-```
-
-Opus is reserved for orchestrator-level reasoning. Sonnet is faster and sufficient for all implementation tasks.
-
----
-
-## Limits & Rules
-
-- **Max 5 AI sessions.** Dual mode counts as 2.
-- **`dev send` only works on AI windows.** Shell-only windows error out.
-- **Include full context in every worker message.** Workers have zero knowledge of the orchestrator conversation. Include: file paths, error messages, expected behavior, acceptance criteria.
-- **Never kill workers without asking the user.** Use `dev cleanup` to list idle; kill only after explicit approval.
-- **`dev broadcast` targets all AI windows.** Shell-only windows are skipped.
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `tmux not found` | `brew install tmux` |
-| `Claude binary not found` | `npm i -g @anthropic-ai/claude-code && claude login` |
-| `Qwen binary not found` | `npm i -g @qwen-ai/qwen-code` |
-| `gh: command not found` | `brew install gh && gh auth login` |
-| Worker not responding | `dev done <alias>` to check; `Ctrl+A <N>` to inspect manually |
-| Output cut off | `dev peek <alias> 200` |
-| Lost context after restart | `dev state show --all` then `dev history` |
-| System slow / high CPU | `dev health` → `dev cleanup` → ask user before killing |
-
----
-
-## System Requirements (Tested)
-
-- macOS (primary target; Linux should work, Windows WSL untested)
-- zsh 5.0+
-- tmux 3.0+ (tested: 3.6a)
-- Node.js 18+ (tested: v20.20.1)
-- Claude Code 2.0+ (tested: 2.1.81)
-- Qwen Code 0.13+ (tested: 0.13.0) — optional
-- GitHub CLI 2.0+ (tested: 2.88.0) — optional
+MIT

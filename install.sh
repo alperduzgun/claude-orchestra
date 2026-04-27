@@ -5,6 +5,7 @@ set -e
 
 INSTALL_DIR="${HOME}/.local/bin"
 CONFIG_DIR="${HOME}/.config/orchestra"
+GHOSTTY_CONFIG="${HOME}/.config/ghostty/config"
 ORCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Claude Orchestra installer"
@@ -67,6 +68,53 @@ if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
   echo ""
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
   echo ""
+fi
+
+# ── Optional: Ghostty auto-restore ───────────────────────────────
+_install_orchestra_attach() {
+  local tmux_bin
+  tmux_bin="$(command -v tmux)"
+  cat > "${INSTALL_DIR}/orchestra-attach" <<ATTACH_EOF
+#!/usr/bin/env zsh
+# Extend PATH so tmux is always found (Ghostty starts with minimal env)
+for p in /opt/homebrew/bin /usr/local/bin "\${HOME}/.local/bin"; do
+  [[ -d "\$p" ]] && [[ ":\$PATH:" != *":\$p:"* ]] && PATH="\$p:\$PATH"
+done
+TMUX_BIN="${tmux_bin}"
+[[ ! -x "\$TMUX_BIN" ]] && TMUX_BIN="\$(command -v tmux 2>/dev/null)" || true
+exec "\$TMUX_BIN" new-session -A -s devenv
+ATTACH_EOF
+  chmod +x "${INSTALL_DIR}/orchestra-attach"
+}
+
+if [[ -f "$GHOSTTY_CONFIG" ]]; then
+  if grep -qE "^(initial-command|command) = .*orchestra-attach" "$GHOSTTY_CONFIG" 2>/dev/null; then
+    echo "Ghostty: auto-restore already configured (skipping)"
+  else
+    read -p "Enable Ghostty auto-restore (all tabs auto-attach to orchestra)? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      _install_orchestra_attach
+      echo "" >> "$GHOSTTY_CONFIG"
+      echo "# Auto-attach to orchestra tmux session on every tab/window open" >> "$GHOSTTY_CONFIG"
+      echo "command = ${INSTALL_DIR}/orchestra-attach" >> "$GHOSTTY_CONFIG"
+      echo "Ghostty: auto-restore enabled"
+    else
+      echo "Ghostty: skipped (add manually: command = ${INSTALL_DIR}/orchestra-attach)"
+    fi
+  fi
+elif command -v ghostty &>/dev/null || [[ -d "/Applications/Ghostty.app" ]]; then
+  read -p "Enable Ghostty auto-restore (all tabs auto-attach to orchestra)? (y/N) " -n 1 -r
+  echo ""
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    _install_orchestra_attach
+    mkdir -p "$(dirname "$GHOSTTY_CONFIG")"
+    echo "# Auto-attach to orchestra tmux session on every tab/window open" >> "$GHOSTTY_CONFIG"
+    echo "command = ${INSTALL_DIR}/orchestra-attach" >> "$GHOSTTY_CONFIG"
+    echo "Ghostty: auto-restore enabled (created $GHOSTTY_CONFIG)"
+  else
+    echo "Ghostty: skipped (add manually: command = ${INSTALL_DIR}/orchestra-attach)"
+  fi
 fi
 
 echo ""
