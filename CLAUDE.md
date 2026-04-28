@@ -12,6 +12,15 @@ The user tells you what they need done across projects. You start worker session
 
 **Note: Orchestra now supports both Claude AND Kimi CLI. You orchestrate Claude workers. For Kimi orchestration, the user can start a Kimi orchestrator with `ORCHESTRA_AI=kimi dev orchestra`.**
 
+## Required Reading (CRITICAL — read on session start)
+
+Before answering or acting, Read these files alongside this CLAUDE.md:
+- `MODEL-SELECTION.md` — Opus/Sonnet/Haiku decision rules (orchestrator/worker/watcher tiers, cost matrix, anti-patterns)
+- `KIMI.md` — Kimi orchestration mode
+- `TROUBLESHOOTING.md` — common dev tool issues + fixes
+
+These are binding rules, not optional appendices. Outbound references (`see X.md`, `details in Y.md`) anywhere in this CLAUDE.md mean "Read it now if the topic is relevant" — not "informational footnote".
+
 ## Startup Sequence
 
 1. Run `~/.local/bin/dev status` to check current state
@@ -231,7 +240,7 @@ dev send <alias> "/model claude-sonnet-4-6"   # Set model on first use
 
 If a worker is already running and model is unknown, set it explicitly. Never let workers default to Opus — Sonnet is faster and sufficient for implementation tasks. Opus is reserved for orchestrator-level reasoning only (this session).
 
-Full model selection rules → see `MODEL-SELECTION.md` in this repo (or `~/.claude/rules/model-selection.md` globally).
+**Full model selection rules are in `MODEL-SELECTION.md` (this repo).** This file MUST be Read on session start (see "Required Reading" at top). Its rules are binding — orchestrator/worker/watcher tier assignments, cost awareness, anti-patterns.
 
 **Quick reference:**
 - Orchestrator (you): **Opus** — strategy, coordination, multi-project synthesis
