@@ -509,9 +509,9 @@ _ai_require() {
 _orchestrator_required_reading() {
   local ai="$1"
   case "$ai" in
-    claude) echo "AGENTS.md, CLAUDE.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
-    codex)  echo "AGENTS.md, CODEX.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
-    kimi)   echo "AGENTS.md, KIMI.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    claude) echo "AGENTS.md, CLAUDE.md, ORCHESTRATOR.md, and MODEL-SELECTION.md" ;;
+    codex)  echo "AGENTS.md, CODEX.md, ORCHESTRATOR.md, and MODEL-SELECTION.md" ;;
+    kimi)   echo "AGENTS.md, KIMI.md, ORCHESTRATOR.md, and MODEL-SELECTION.md" ;;
     *) return 1 ;;
   esac
 }
