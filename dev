@@ -62,8 +62,8 @@ MAX_AI_SESSIONS="${MAX_AI_SESSIONS:-10}"
 CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 # Kimi CLI process detection (Python process with kimi module)
 KIMI_PROC_PATTERN="(kimi|python.*kimi)"
-# Codex CLI runs as a node process
-CODEX_PROC_PATTERN="^node$"
+# Codex CLI runs as a node process; detection uses _is_pid_codex / _is_window_codex
+# helpers to avoid false positives from arbitrary node processes.
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
 HISTORY_FILE="${HOME}/.local/share/orchestra/history.log"
 
@@ -378,8 +378,7 @@ _codex_count() {
     local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
     while IFS= read -r wname; do
       [[ "$wname" == "orchestra" ]] && continue
-      local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
-      [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]] && count=$((count + 1))
+      _is_window_codex "$wname" && count=$((count + 1))
     done <<< "$windows"
   fi
   echo "$count"
@@ -419,13 +418,15 @@ _get_ai_type() {
 
 _detect_ai_type() {
   local name="$1"
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  local pane_pid_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_pid} #{pane_current_command}" 2>/dev/null | head -1)
+  local pid="" pcmd=""
+  read -r pid pcmd <<< "$pane_pid_cmd"
 
-  if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+  if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
     echo "claude"
-  elif [[ "$pane_cmd" =~ ^python ]] || [[ "$pane_cmd" == "kimi" ]]; then
+  elif [[ "$pcmd" =~ ^python ]] || [[ "$pcmd" == "kimi" ]]; then
     echo "kimi"
-  elif [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then
+  elif _is_pid_codex "$pid" "$pcmd"; then
     echo "codex"
   else
     echo ""
@@ -435,10 +436,12 @@ _detect_ai_type() {
 _is_ai_running() {
   local name="$1"
   if ! _has_window "$name"; then return 1; fi
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then return 0; fi
-  if [[ "$pane_cmd" =~ ^python ]] || [[ "$pane_cmd" == "kimi" ]]; then return 0; fi
-  if [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then return 0; fi
+  local pane_pid_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_pid} #{pane_current_command}" 2>/dev/null | head -1)
+  local pid="" pcmd=""
+  read -r pid pcmd <<< "$pane_pid_cmd"
+  if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then return 0; fi
+  if [[ "$pcmd" =~ ^python ]] || [[ "$pcmd" == "kimi" ]]; then return 0; fi
+  if _is_pid_codex "$pid" "$pcmd"; then return 0; fi
   return 1
 }
 
@@ -450,6 +453,30 @@ _get_ai_bin() {
     codex) echo "$CODEX_BIN" ;;
     *) echo "" ;;
   esac
+}
+
+# Verify that a process (by PID and command name) is actually Codex CLI,
+# not just any node process. Codex runs via node, so pane_current_command
+# shows "node"; we check the full command line to avoid false positives.
+_is_pid_codex() {
+  local pid="$1"
+  local pcmd="$2"
+  [[ "$pcmd" == "codex" ]] && return 0
+  if [[ "$pcmd" == "node" && -n "$pid" ]]; then
+    local cmdline=$(ps -o args= -p "$pid" 2>/dev/null)
+    [[ "$cmdline" =~ codex ]] && return 0
+  fi
+  return 1
+}
+
+# Check if any pane in the given window is running Codex CLI.
+_is_window_codex() {
+  local name="$1"
+  local pane_pids=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_pid} #{pane_current_command}" 2>/dev/null)
+  while IFS=' ' read -r pid pcmd; do
+    _is_pid_codex "$pid" "$pcmd" && return 0
+  done <<< "$pane_pids"
+  return 1
 }
 
 # Return the shell command that launches a given AI tool.
@@ -653,11 +680,13 @@ _clean_terminal_output() {
 _detect_pane_ai() {
   local name="$1"
   local pane_idx="$2"
-  local pcmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_current_command}" 2>/dev/null \
-    | awk -v i="$pane_idx" '$1==i {print $2}')
+  local pane_info=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_pid} #{pane_current_command}" 2>/dev/null \
+    | awk -v i="$pane_idx" '$1==i {print $2, $3}')
+  local pid="" pcmd=""
+  read -r pid pcmd <<< "$pane_info"
   if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then echo "claude"
   elif [[ "$pcmd" == "kimi" ]] || [[ "$pcmd" =~ ^[Pp]ython ]]; then echo "kimi"
-  elif [[ "$pcmd" == "codex" ]]; then echo "codex"
+  elif _is_pid_codex "$pid" "$pcmd"; then echo "codex"
   elif [[ "$pcmd" == "qwen" ]]; then echo "qwen"
   elif [[ "$pcmd" == "gemini" ]]; then echo "gemini"
   else echo "$pcmd"
@@ -1143,8 +1172,7 @@ _start_codex() {
 
   # If window exists, check if Codex is running
   if _has_window "$name"; then
-    local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-    if [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then
+    if _is_window_codex "$name"; then
       echo "Already running: $name [codex]"
       return 0
     fi
@@ -1171,12 +1199,11 @@ _start_codex() {
     echo "Started: $name [codex] -> ${dir/$HOME/~}"
   fi
 
-  # Wait for Codex to be ready (poll for node process, max 15s)
+  # Wait for Codex to be ready (poll for codex process, max 15s)
   local max_wait=15
   local waited=0
   while [[ $waited -lt $max_wait ]]; do
-    local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-    [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]] && break
+    _is_window_codex "$name" && break
     sleep 1
     waited=$((waited + 1))
   done
@@ -1278,8 +1305,8 @@ _status() {
   printf "  %-4s %-18s %-12s %s\n" "───" "───────" "──────" "────"
 
   if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}|#{window_name}|#{pane_current_command}" 2>/dev/null)
-    while IFS='|' read -r idx wname pcmd; do
+    local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}|#{window_name}|#{pane_pid}|#{pane_current_command}" 2>/dev/null)
+    while IFS='|' read -r idx wname pid pcmd; do
       found=1
       local dir="${PROJECTS[$wname]}"
       [[ -z "$dir" ]] && dir="(orchestrator)"
@@ -1288,7 +1315,7 @@ _status() {
         sess_state="claude"
       elif [[ "$pcmd" =~ ^python ]] || [[ "$pcmd" == "kimi" ]]; then
         sess_state="kimi"
-      elif [[ "$pcmd" =~ $CODEX_PROC_PATTERN ]]; then
+      elif _is_pid_codex "$pid" "$pcmd"; then
         sess_state="codex"
       fi
       printf "  %-4s %-18s %-12s %s\n" "$idx" "$wname" "[$sess_state]" "${dir/$HOME/~}"
@@ -1320,15 +1347,17 @@ _broadcast() {
     local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
     while IFS= read -r wname; do
       [[ "$wname" == "orchestra" ]] && continue
-      local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      local pane_pid_cmd=$(tmux list-panes -t "$ORCH_SESSION:$wname" -F "#{pane_pid} #{pane_current_command}" 2>/dev/null | head -1)
+      local pid="" pcmd=""
+      read -r pid pcmd <<< "$pane_pid_cmd"
       local is_ai=false
-      if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+      if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then
         is_ai=true
         claude_count=$((claude_count + 1))
-      elif [[ "$pane_cmd" =~ ^python ]] || [[ "$pane_cmd" == "kimi" ]]; then
+      elif [[ "$pcmd" =~ ^python ]] || [[ "$pcmd" == "kimi" ]]; then
         is_ai=true
         kimi_count=$((kimi_count + 1))
-      elif [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then
+      elif _is_pid_codex "$pid" "$pcmd"; then
         is_ai=true
         codex_count=$((codex_count + 1))
       fi
@@ -1608,13 +1637,13 @@ _recover() {
     local kimi_recovered=0
     local codex_recovered=0
     if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
-      local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_current_command}" 2>/dev/null)
-      while IFS='|' read -r wname pcmd; do
+      local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_pid}|#{pane_current_command}" 2>/dev/null)
+      while IFS='|' read -r wname pid pcmd; do
         [[ "$wname" == "orchestra" ]] && continue
         [[ -z "${PROJECTS[$wname]}" ]] && continue
         
         # Check current AI type and recover accordingly
-        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && [[ ! "$pcmd" =~ $CODEX_PROC_PATTERN ]]; then
+        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && ! _is_pid_codex "$pid" "$pcmd"; then
           # Window exists but no AI running - determine which AI was there
           local tracked_ai=$(_get_ai_type "$wname")
           local dir="${PROJECTS[$wname]}"
@@ -1658,7 +1687,9 @@ _recover() {
     return 1
   fi
 
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  local pane_pid_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_pid} #{pane_current_command}" 2>/dev/null | head -1)
+  local pid="" pane_cmd=""
+  read -r pid pane_cmd <<< "$pane_pid_cmd"
   local dir="${PROJECTS[$target]}"
   local tracked_ai=$(_get_ai_type "$target")
   
@@ -1671,7 +1702,7 @@ _recover() {
     echo "$target: Kimi is already running"
     return 0
   fi
-  if [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then
+  if _is_pid_codex "$pid" "$pane_cmd"; then
     echo "$target: Codex is already running"
     return 0
   fi
@@ -1707,8 +1738,7 @@ _recover() {
     local max_wait=15
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
-      pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
-      [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]] && break
+      _is_window_codex "$target" && break
       sleep 1
       waited=$((waited + 1))
     done
@@ -1756,7 +1786,9 @@ _orchestra() {
   esac
 
   # Check what's currently running in orchestra window
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
+  local pane_pid_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_pid} #{pane_current_command}" 2>/dev/null | head -1)
+  local pid="" pane_cmd=""
+  read -r pid pane_cmd <<< "$pane_pid_cmd"
   local current_ai=""
   
   # Detect current AI type
@@ -1764,7 +1796,7 @@ _orchestra() {
     current_ai="claude"
   elif [[ "$pane_cmd" =~ ^python ]] || [[ "$pane_cmd" == "kimi" ]]; then
     current_ai="kimi"
-  elif [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then
+  elif _is_pid_codex "$pid" "$pane_cmd"; then
     current_ai="codex"
   fi
 
