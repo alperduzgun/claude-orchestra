@@ -532,7 +532,7 @@ _worker_launch_cmd() {
   local prompt="$(_worker_start_prompt)"
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
-    codex)  echo "'$CODEX_BIN' \"$prompt\"" ;;  # positional arg = initial prompt (verified with codex --help)
+    codex)  echo "'$CODEX_BIN'" ;;  # no prompt arg; CODEX.md in working dir is read automatically
     kimi)   echo "'$KIMI_BIN'" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
@@ -641,7 +641,7 @@ _orchestrator_launch_cmd() {
   local ai="$1"
   local prompt="$(_orchestrator_start_prompt "$ai")"
   case "$ai" in
-    codex) echo "cd '$ORCH_DIR' && '$CODEX_BIN' \"$prompt\"" ;;
+    codex) echo "cd '$ORCH_DIR' && '$CODEX_BIN'" ;;  # no prompt arg; ORCH_DIR/CODEX.md auto-read
     kimi)  echo "cd '$ORCH_DIR' && '$KIMI_BIN'" ;;
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; cd '$ORCH_DIR' && '$CLAUDE_BIN' --dangerously-skip-permissions \"$prompt\"" ;;
     *) return 1 ;;
