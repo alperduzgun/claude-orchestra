@@ -681,7 +681,11 @@ _pane_logfile_for_side() {
 }
 
 _clean_terminal_output() {
-  perl -pe 's/\e\[[0-9;?]*[[:alpha:]]//g; s/\e\][^\a]*\a//g; s/\r/\n/g'
+  if command -v perl >/dev/null 2>&1; then
+    perl -pe 's/\e\[[0-9;?]*[[:alpha:]]//g; s/\e\][^\a]*\a//g; s/\r/\n/g'
+  else
+    sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\r'
+  fi
 }
 
 # Detect which AI is running in a specific pane (by index).
