@@ -529,10 +529,11 @@ _worker_start_prompt() {
 
 _worker_launch_cmd() {
   local ai="$1"
+  local dir="${2:-}"
   local prompt="$(_worker_start_prompt)"
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
-    codex)  echo "cd '$CONFIG_DIR' && '$CODEX_BIN' -C '$dir'" ;;  # CONFIG_DIR/CODEX.md = worker role; -C keeps project as working root
+    codex)  echo "cd '$CONFIG_DIR' && '$CODEX_BIN'${dir:+ -C '$dir'}" ;;  # CONFIG_DIR/CODEX.md = worker role; -C keeps project as working root
     kimi)   echo "'$KIMI_BIN' --agent-file '$ORCH_DIR/kimi-worker-agent.yaml'" ;;  # agent spec sets system context via KIMI.md
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
@@ -967,8 +968,8 @@ _start_dual() {
 
   # Resolve launch commands and verify binaries
   local left_cmd right_cmd
-  left_cmd=$(_worker_launch_cmd "$left_ai")  || { echo "ERROR: unknown left AI '$left_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
-  right_cmd=$(_worker_launch_cmd "$right_ai") || { echo "ERROR: unknown right AI '$right_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
+  left_cmd=$(_worker_launch_cmd "$left_ai" "$dir")  || { echo "ERROR: unknown left AI '$left_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
+  right_cmd=$(_worker_launch_cmd "$right_ai" "$dir") || { echo "ERROR: unknown right AI '$right_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
   _ai_require "$left_ai"  || return 1
   _ai_require "$right_ai" || return 1
   _ensure_session || return 1
@@ -1124,7 +1125,7 @@ _start_codex() {
     fi
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
-    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && $(_worker_launch_cmd codex "$dir")" Enter
     echo "Launched Codex in existing window: $name"
   else
     local claude_active=$(_claude_count)
@@ -1141,7 +1142,7 @@ _start_codex() {
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     sleep 0.5
-    tmux send-keys -t "$ORCH_SESSION:$name" "$(_worker_launch_cmd codex)" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "$(_worker_launch_cmd codex "$dir")" Enter
     echo "Started: $name [codex] -> ${dir/$HOME/~}"
   fi
 
@@ -1596,7 +1597,7 @@ _recover() {
           
           if [[ "$tracked_ai" == "codex" ]]; then
             echo "Recovering $wname [codex]..."
-            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
+            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd codex "$dir")" Enter
             codex_recovered=$((codex_recovered + 1))
             _log_history "RECOVER-CODEX $wname"
           elif [[ "$tracked_ai" == "kimi" ]] || [[ -z "$tracked_ai" && -x "$KIMI_BIN" ]]; then
@@ -1677,7 +1678,7 @@ _recover() {
     fi
   elif [[ "$tracked_ai" == "codex" ]]; then
     echo "Recovering $target [codex]..."
-    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
+    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd codex "$dir")" Enter
     _log_history "RECOVER-CODEX $target"
 
     local max_wait=15
