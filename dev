@@ -618,14 +618,22 @@ _ensure_orchestrator_prompt_files() {
     done
   fi
 
-  local missing=()
+  # Migrate from old location (pre-orchestrator/ layout) if present
   local f
+  for f in "${files[@]}"; do
+    if [[ ! -f "$ORCH_DIR/$f" && -f "$CONFIG_DIR/$f" ]]; then
+      cp "$CONFIG_DIR/$f" "$ORCH_DIR/$f"
+    fi
+  done
+
+  local missing=()
   for f in "${files[@]}"; do
     [[ -f "$ORCH_DIR/$f" ]] || missing+=("$f")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "ERROR: Missing orchestrator prompt files in ${ORCH_DIR}: ${missing[*]}"
-    return 1
+    echo "WARNING: Missing orchestrator prompt files in ${ORCH_DIR}: ${missing[*]}"
+    echo "Run: dev update   — to fetch them"
+    # Continue anyway; orchestrator can still start with partial prompts
   fi
 }
 
