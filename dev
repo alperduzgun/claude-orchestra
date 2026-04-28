@@ -52,9 +52,9 @@ _require_codex() {
   fi
 }
 ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
-# ORCH_DIR: where CLAUDE.md lives for orchestrator mode
+# ORCH_DIR: dedicated orchestrator prompt directory
 # Override with ORCHESTRA_DIR env var or set in ~/.config/orchestra/orchestra.conf
-ORCH_DIR="${ORCHESTRA_DIR:-$HOME/.config/orchestra}"
+ORCH_DIR="${ORCHESTRA_DIR:-$CONFIG_DIR/orchestrator}"
 MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-10}"
 MAX_KIMI_SESSIONS="${MAX_KIMI_SESSIONS:-10}"
 MAX_AI_SESSIONS="${MAX_AI_SESSIONS:-10}"
@@ -259,9 +259,9 @@ _update() {
 
   echo "Will update:"
   echo "  dev                    ~/.local/bin/dev"
-  echo "  CLAUDE.md              ${CONFIG_DIR}/CLAUDE.md"
-  echo "  KIMI.md                ${CONFIG_DIR}/KIMI.md"
-  echo "  MODEL-SELECTION.md     ${CONFIG_DIR}/MODEL-SELECTION.md"
+  echo "  worker prompts         ${CONFIG_DIR}/AGENTS.md, WORKER.md, CLAUDE.md, CODEX.md, KIMI.md"
+  echo "  shared docs            ${CONFIG_DIR}/ORCHESTRATOR.md, MODEL-SELECTION.md, TROUBLESHOOTING.md"
+  echo "  orchestrator prompts   ${ORCH_DIR}/"
   echo ""
   echo "Preserved:"
   echo "  ${CONFIG_DIR}/projects.conf"
@@ -299,10 +299,26 @@ _update() {
 
   [[ "$ok" == "false" ]] && return 1
 
-  # Update orchestrator prompts
-  for f in CLAUDE.md KIMI.md MODEL-SELECTION.md; do
-    if curl -sf "${raw_base}/${f}" -o "${CONFIG_DIR}/${f}" 2>/dev/null; then
+  mkdir -p "${CONFIG_DIR}" "${ORCH_DIR}"
+
+  local prompt_source_root=""
+  if [[ -n "$REPO_ROOT" ]]; then
+    prompt_source_root="$REPO_ROOT"
+  fi
+
+  for f in AGENTS.md WORKER.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
+    if [[ -n "$prompt_source_root" && -f "${prompt_source_root}/${f}" ]]; then
+      cp "${prompt_source_root}/${f}" "${CONFIG_DIR}/${f}" && echo "  [ok]  ${f} → ${CONFIG_DIR}/${f}"
+    elif curl -sf "${raw_base}/${f}" -o "${CONFIG_DIR}/${f}" 2>/dev/null; then
       echo "  [ok]  ${f} → ${CONFIG_DIR}/${f}"
+    fi
+  done
+
+  for f in AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
+    if [[ -n "$prompt_source_root" && -f "${prompt_source_root}/orchestrator/${f}" ]]; then
+      cp "${prompt_source_root}/orchestrator/${f}" "${ORCH_DIR}/${f}" && echo "  [ok]  orchestrator/${f} → ${ORCH_DIR}/${f}"
+    elif curl -sf "${raw_base}/orchestrator/${f}" -o "${ORCH_DIR}/${f}" 2>/dev/null; then
+      echo "  [ok]  orchestrator/${f} → ${ORCH_DIR}/${f}"
     fi
   done
 
@@ -443,7 +459,7 @@ _ai_launch_cmd() {
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions" ;;
     kimi)   echo "'$KIMI_BIN'" ;;
-    codex)  echo "codex exec" ;;
+    codex)  echo "'$CODEX_BIN'" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
     *)      return 1 ;;
@@ -461,6 +477,176 @@ _ai_require() {
     gemini) command -v gemini >/dev/null || { echo "ERROR: gemini not found in PATH"; return 1; } ;;
     *)      echo "ERROR: unknown AI type: $ai (supported: claude, codex, kimi, qwen, gemini)"; return 1 ;;
   esac
+}
+
+_orchestrator_required_reading() {
+  local ai="$1"
+  case "$ai" in
+    claude) echo "AGENTS.md, CLAUDE.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    codex)  echo "AGENTS.md, CODEX.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    kimi)   echo "AGENTS.md, KIMI.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    *) return 1 ;;
+  esac
+}
+
+_orchestrator_start_prompt() {
+  local ai="$1"
+  local files="$(_orchestrator_required_reading "$ai")" || return 1
+  echo "Read $files in this directory before answering or acting. Apply the AGENTS.md and ORCHESTRATOR.md rules as binding instructions. State your role in one sentence, then wait for the user's request."
+}
+
+_worker_start_prompt() {
+  local worker_file="${CONFIG_DIR}/WORKER.md"
+  echo "You are an Orchestra worker AI, not the orchestrator. Follow the shared worker rules in ${worker_file} if that file exists, then follow the local project instructions in the current directory. Stay focused on the assigned project task. Do not manage tmux sessions, start or stop workers, or run dev session-management commands unless the task is explicitly about the orchestra code. End completion replies with DONE: one-line summary."
+}
+
+_worker_launch_cmd() {
+  local ai="$1"
+  local prompt="$(_worker_start_prompt)"
+  case "$ai" in
+    claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
+    codex)  echo "'$CODEX_BIN' \"$prompt\"" ;;
+    kimi)   echo "'$KIMI_BIN'" ;;
+    qwen)   echo "qwen" ;;
+    gemini) echo "gemini" ;;
+    *)      return 1 ;;
+  esac
+}
+
+_send_worker_bootstrap_if_needed() {
+  local target="$1"
+  local ai="$2"
+  local prompt="$(_worker_start_prompt)"
+  case "$ai" in
+    claude)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+    kimi)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ ^[Pp]ython ]] || [[ "$pane_cmd" == "kimi" ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+  esac
+}
+
+_send_orchestrator_bootstrap_if_needed() {
+  local target="$1"
+  local ai="$2"
+  local prompt="$(_orchestrator_start_prompt "$ai")"
+  case "$ai" in
+    kimi)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ ^[Pp]ython ]] || [[ "$pane_cmd" == "kimi" ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+  esac
+}
+
+_ensure_orchestrator_prompt_files() {
+  mkdir -p "$ORCH_DIR" || return 1
+  local files=(AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md)
+  local repo_root
+  repo_root=$(_find_repo_root)
+  if [[ -n "$repo_root" && -d "$repo_root/orchestrator" ]]; then
+    local f
+    for f in "${files[@]}"; do
+      if [[ -f "$repo_root/orchestrator/$f" && ! -f "$ORCH_DIR/$f" ]]; then
+        cp "$repo_root/orchestrator/$f" "$ORCH_DIR/$f"
+      fi
+    done
+  fi
+
+  local missing=()
+  local f
+  for f in "${files[@]}"; do
+    [[ -f "$ORCH_DIR/$f" ]] || missing+=("$f")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "ERROR: Missing orchestrator prompt files in ${ORCH_DIR}: ${missing[*]}"
+    return 1
+  fi
+}
+
+_orchestrator_launch_cmd() {
+  local ai="$1"
+  local prompt="$(_orchestrator_start_prompt "$ai")"
+  case "$ai" in
+    codex) echo "cd '$ORCH_DIR' && '$CODEX_BIN' \"$prompt\"" ;;
+    kimi)  echo "cd '$ORCH_DIR' && '$KIMI_BIN'" ;;
+    claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; cd '$ORCH_DIR' && '$CLAUDE_BIN' --dangerously-skip-permissions \"$prompt\"" ;;
+    *) return 1 ;;
+  esac
+}
+
+_pane_index_for_side() {
+  local name="$1"
+  local side="${2:-left}"
+  local panes
+  panes=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_left}" 2>/dev/null) || return 1
+  [[ -z "$panes" ]] && return 1
+  if [[ "$side" == "right" ]]; then
+    echo "$panes" | sort -k2,2n | tail -1 | awk '{print $1}'
+  else
+    echo "$panes" | sort -k2,2n | head -1 | awk '{print $1}'
+  fi
+}
+
+_pane_target_for_side() {
+  local name="$1"
+  local side="${2:-left}"
+  local idx
+  idx=$(_pane_index_for_side "$name" "$side") || return 1
+  echo "$ORCH_SESSION:$name.$idx"
+}
+
+_window_logfile() {
+  local name="$1"
+  echo "$LOG_DIR/${name}.log"
+}
+
+_pane_logfile_for_side() {
+  local name="$1"
+  local side="${2:-left}"
+  echo "$LOG_DIR/${name}.${side}.log"
+}
+
+_clean_terminal_output() {
+  perl -pe 's/\e\[[0-9;?]*[[:alpha:]]//g; s/\e\][^\a]*\a//g; s/\r/\n/g'
 }
 
 # Detect which AI is running in a specific pane (by index).
@@ -558,6 +744,11 @@ _done() {
 # Helper: check if a window exists in the orchestra session
 _has_window() {
   tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null | grep -qx "$1"
+}
+
+_find_window_conflicts() {
+  local name="$1"
+  tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null | grep -E "^${name}(-[0-9]+|-)?$"
 }
 
 # Helper: ensure the orchestra tmux session exists
@@ -736,7 +927,7 @@ _start_claude() {
     # Window exists but no Claude — attach logger then launch
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
-    tmux send-keys -t "$ORCH_SESSION:$name" "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && $(_worker_launch_cmd claude)" Enter
     echo "Launched Claude in existing window: $name"
   else
     # Enforce session limit
@@ -752,7 +943,7 @@ _start_claude() {
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     sleep 0.5
-    tmux send-keys -t "$ORCH_SESSION:$name" "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "$(_worker_launch_cmd claude)" Enter
     echo "Started: $name -> ${dir/$HOME/~}"
   fi
 
@@ -773,6 +964,7 @@ _start_claude() {
     _track_ai_type "$name" "claude"
     _log_history "START $name [window $win_index]"
     echo "Ready: $name [claude] [window $win_index] — switch with Ctrl+A $win_index"
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "claude"
   fi
 }
 
@@ -796,25 +988,39 @@ _start_dual() {
 
   # Resolve launch commands and verify binaries
   local left_cmd right_cmd
-  left_cmd=$(_ai_launch_cmd "$left_ai")  || { echo "ERROR: unknown left AI '$left_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
-  right_cmd=$(_ai_launch_cmd "$right_ai") || { echo "ERROR: unknown right AI '$right_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
+  left_cmd=$(_worker_launch_cmd "$left_ai")  || { echo "ERROR: unknown left AI '$left_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
+  right_cmd=$(_worker_launch_cmd "$right_ai") || { echo "ERROR: unknown right AI '$right_ai' (supported: claude, codex, kimi, qwen, gemini)"; return 1; }
   _ai_require "$left_ai"  || return 1
   _ai_require "$right_ai" || return 1
   _ensure_session || return 1
 
+  local conflicts
+  conflicts=$(_find_window_conflicts "$name")
+  if [[ -n "$conflicts" ]]; then
+    echo "Already running or conflicting window exists for $name:"
+    echo "$conflicts" | sed 's/^/  - /'
+    return 1
+  fi
+
   # Enforce session limit (dual counts as 2)
-  local total_active=$(( $(_claude_count) + $(_kimi_count) ))
-  if [[ $total_active -ge $MAX_AI_SESSIONS ]]; then
+  local total_active=$(( $(_claude_count) + $(_kimi_count) + $(_codex_count) ))
+  if [[ $((total_active + 2)) -gt $MAX_AI_SESSIONS ]]; then
     echo "ERROR: Max $MAX_AI_SESSIONS active AI sessions reached. Kill one first."
     return 1
   fi
 
   # Create window + launch LEFT AI
-  tmux new-window -t "$ORCH_SESSION" -n "$name" -c "$dir"
+  local actual_name
+  actual_name=$(tmux new-window -P -F "#{window_name}" -t "$ORCH_SESSION" -n "$name" -c "$dir" 2>/dev/null)
+  if [[ "$actual_name" != "$name" ]]; then
+    echo "ERROR: tmux created '$actual_name' instead of '$name'. Refusing to continue to avoid duplicate sessions."
+    return 1
+  fi
   mkdir -p "$LOG_DIR"
-  tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
+  tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$(_window_logfile "$name")'"
   sleep 0.5
   tmux send-keys -t "$ORCH_SESSION:$name" "$left_cmd" Enter
+  _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "$left_ai"
 
   # Best-effort wait for left AI to appear (process detection is per-AI, keep it simple)
   sleep 2
@@ -822,11 +1028,18 @@ _start_dual() {
   # Split right + launch RIGHT AI
   tmux split-window -h -t "$ORCH_SESSION:$name" -c "$dir"
   sleep 0.3
-  tmux send-keys -t "$ORCH_SESSION:$name.2" "$right_cmd" Enter
+  local left_pane_target
+  left_pane_target=$(_pane_target_for_side "$name" "left") || { echo "ERROR: Failed to resolve left pane for $name"; return 1; }
+  tmux pipe-pane -t "$left_pane_target" -o "cat >> '$(_pane_logfile_for_side "$name" "left")'"
+  local right_pane_target
+  right_pane_target=$(_pane_target_for_side "$name" "right") || { echo "ERROR: Failed to resolve right pane for $name"; return 1; }
+  tmux pipe-pane -t "$right_pane_target" -o "cat >> '$(_pane_logfile_for_side "$name" "right")'"
+  tmux send-keys -t "$right_pane_target" "$right_cmd" Enter
+  _send_worker_bootstrap_if_needed "$right_pane_target" "$right_ai"
   sleep 2
 
   # Select left pane as active
-  tmux select-pane -t "$ORCH_SESSION:$name.1"
+  tmux select-pane -t "$left_pane_target"
 
   local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
   _track_ai_type "$name" "dual:${left_ai}:${right_ai}"
@@ -864,15 +1077,17 @@ _start_kimi() {
     # Window exists but no Kimi — attach logger then launch
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
-    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && '$KIMI_BIN'" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && $(_worker_launch_cmd kimi)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "kimi"
     echo "Launched Kimi in existing window: $name"
   else
     # Enforce session limit (combined count)
     local claude_active=$(_claude_count)
     local kimi_active=$(_kimi_count)
-    local total_active=$((claude_active + kimi_active))
+    local codex_active=$(_codex_count)
+    local total_active=$((claude_active + kimi_active + codex_active))
     if [[ $total_active -ge $MAX_AI_SESSIONS ]]; then
-      echo "ERROR: Max $MAX_AI_SESSIONS active AI sessions reached (Claude: $claude_active, Kimi: $kimi_active)."
+      echo "ERROR: Max $MAX_AI_SESSIONS active AI sessions reached (Claude: $claude_active, Kimi: $kimi_active, Codex: $codex_active)."
       echo "Kill one first: dev kill <project>"
       return 1
     fi
@@ -882,7 +1097,8 @@ _start_kimi() {
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     sleep 0.5
-    tmux send-keys -t "$ORCH_SESSION:$name" "'$KIMI_BIN'" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "$(_worker_launch_cmd kimi)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "kimi"
     echo "Started: $name [kimi] -> ${dir/$HOME/~}"
   fi
 
@@ -934,7 +1150,7 @@ _start_codex() {
     fi
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
-    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && '$CODEX_BIN'" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
     echo "Launched Codex in existing window: $name"
   else
     local claude_active=$(_claude_count)
@@ -951,7 +1167,7 @@ _start_codex() {
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     sleep 0.5
-    tmux send-keys -t "$ORCH_SESSION:$name" "'$CODEX_BIN'" Enter
+    tmux send-keys -t "$ORCH_SESSION:$name" "$(_worker_launch_cmd codex)" Enter
     echo "Started: $name [codex] -> ${dir/$HOME/~}"
   fi
 
@@ -1013,15 +1229,15 @@ _send() {
   fi
 
   # Determine target pane
-  local pane_target="$ORCH_SESSION:$name.1"
-  if [[ "$target" == "right" ]]; then
-    pane_target="$ORCH_SESSION:$name.2"
-  fi
+  local pane_target
+  pane_target=$(_pane_target_for_side "$name" "$target") || {
+    echo "ERROR: Failed to resolve $target pane for $name"
+    return 1
+  }
 
   # Detect which AI is actually running in the target pane (for logging).
-  # Pane indices: 1 = left, 2 = right (after split-window -h).
-  local pane_idx=1
-  [[ "$target" == "right" ]] && pane_idx=2
+  local pane_idx
+  pane_idx=$(_pane_index_for_side "$name" "$target") || pane_idx=""
   local ai_label=$(_detect_pane_ai "$name" "$pane_idx")
   [[ -z "$ai_label" ]] && ai_label="unknown"
   local ai_type="$ai_label"
@@ -1045,6 +1261,7 @@ _send() {
     rm -f "$tmpfile"
   else
     tmux send-keys -l -t "$pane_target" "$msg"
+    sleep 0.2
     tmux send-keys -t "$pane_target" Enter
   fi
 
@@ -1133,12 +1350,20 @@ _peek() {
   local name=""
   local target="left"
   local lines="50"
+  local source="auto"
+  local raw=false
 
   for arg in "$@"; do
     if [[ "$arg" == "--qwen" || "$arg" == "--right" ]]; then
       target="right"
     elif [[ "$arg" == "--left" ]]; then
       target="left"
+    elif [[ "$arg" == "--log" ]]; then
+      source="log"
+    elif [[ "$arg" == "--screen" ]]; then
+      source="screen"
+    elif [[ "$arg" == "--raw" ]]; then
+      raw=true
     elif [[ -z "$name" ]]; then
       name="$arg"
     elif [[ "$arg" =~ ^[0-9]+$ ]]; then
@@ -1147,7 +1372,7 @@ _peek() {
   done
 
   if [[ -z "$name" ]]; then
-    echo "Usage: dev peek <project> [--qwen|--right|--left] [lines]"
+    echo "Usage: dev peek <project> [--qwen|--right|--left] [--screen] [--raw] [lines]"
     return 1
   fi
 
@@ -1156,19 +1381,51 @@ _peek() {
     return 1
   fi
 
-  local pane_target="$ORCH_SESSION:$name.1"
-  [[ "$target" == "right" ]] && pane_target="$ORCH_SESSION:$name.2"
+  local pane_target
+  pane_target=$(_pane_target_for_side "$name" "$target") || {
+    echo "ERROR: Failed to resolve $target pane for $name"
+    return 1
+  }
 
   _log_history "PEEK $name [$target]"
 
-  # Capture pane content and strip ANSI/TUI garbage
-  tmux capture-pane -t "$pane_target" -p -S "-$lines" | \
-    sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | \
-    sed 's/\x1b\][^\x07]*\x07//g' | \
-    tr -d '\xc2\xa0' | \
-    sed 's/[[:cntrl:]]//g' | \
-    grep -v '^[[:space:]]*$' | \
-    tail -"$lines"
+  local pane_logfile="$(_pane_logfile_for_side "$name" "$target")"
+  local window_logfile="$(_window_logfile "$name")"
+  local logfile="$pane_logfile"
+
+  if [[ "$source" == "auto" ]]; then
+    if [[ -f "$pane_logfile" ]]; then
+      source="log"
+    else
+      source="screen"
+    fi
+  fi
+
+  if [[ "$source" == "log" && ! -f "$logfile" ]]; then
+    if [[ -f "$window_logfile" ]]; then
+      logfile="$window_logfile"
+    else
+      source="screen"
+    fi
+  fi
+
+  if [[ "$source" == "log" && -f "$logfile" ]]; then
+    if [[ "$raw" == true ]]; then
+      tail -n "$lines" "$logfile"
+    else
+      tail -n "$lines" "$logfile" | _clean_terminal_output
+    fi
+    return 0
+  fi
+
+  if [[ "$raw" == true ]]; then
+    tmux capture-pane -J -t "$pane_target" -p -S "-$lines"
+  else
+    tmux capture-pane -J -t "$pane_target" -p -S "-$lines" | \
+      _clean_terminal_output | \
+      grep -v '^[[:space:]]*$' | \
+      tail -"$lines"
+  fi
 }
 
 # Live tail of worker's log file
@@ -1349,6 +1606,7 @@ _recover() {
     # Recover all crashed sessions
     local claude_recovered=0
     local kimi_recovered=0
+    local codex_recovered=0
     if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
       local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_current_command}" 2>/dev/null)
       while IFS='|' read -r wname pcmd; do
@@ -1356,26 +1614,32 @@ _recover() {
         [[ -z "${PROJECTS[$wname]}" ]] && continue
         
         # Check current AI type and recover accordingly
-        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]]; then
+        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && [[ ! "$pcmd" =~ $CODEX_PROC_PATTERN ]]; then
           # Window exists but no AI running - determine which AI was there
           local tracked_ai=$(_get_ai_type "$wname")
           local dir="${PROJECTS[$wname]}"
           
-          if [[ "$tracked_ai" == "kimi" ]] || [[ -z "$tracked_ai" && -x "$KIMI_BIN" ]]; then
+          if [[ "$tracked_ai" == "codex" ]]; then
+            echo "Recovering $wname [codex]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
+            codex_recovered=$((codex_recovered + 1))
+            _log_history "RECOVER-CODEX $wname"
+          elif [[ "$tracked_ai" == "kimi" ]] || [[ -z "$tracked_ai" && -x "$KIMI_BIN" ]]; then
             echo "Recovering $wname [kimi]..."
-            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && '$KIMI_BIN'" Enter
+            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd kimi)" Enter
+            _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "kimi"
             kimi_recovered=$((kimi_recovered + 1))
             _log_history "RECOVER-KIMI $wname"
           else
             echo "Recovering $wname [claude]..."
-            tmux send-keys -t "$ORCH_SESSION:$wname" "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
+            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
             claude_recovered=$((claude_recovered + 1))
             _log_history "RECOVER $wname"
           fi
         fi
       done <<< "$windows"
     fi
-    echo "Recovered $((claude_recovered + kimi_recovered)) sessions (Claude: $claude_recovered, Kimi: $kimi_recovered)."
+    echo "Recovered $((claude_recovered + kimi_recovered + codex_recovered)) sessions (Claude: $claude_recovered, Kimi: $kimi_recovered, Codex: $codex_recovered)."
     return 0
   fi
 
@@ -1415,7 +1679,8 @@ _recover() {
   # Determine which AI to recover
   if [[ "$tracked_ai" == "kimi" ]]; then
     echo "Recovering $target [kimi]..."
-    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && '$KIMI_BIN'" Enter
+    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd kimi)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$target" "kimi"
     _log_history "RECOVER-KIMI $target"
 
     local max_wait=15
@@ -1436,7 +1701,7 @@ _recover() {
     fi
   elif [[ "$tracked_ai" == "codex" ]]; then
     echo "Recovering $target [codex]..."
-    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && '$CODEX_BIN'" Enter
+    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
     _log_history "RECOVER-CODEX $target"
 
     local max_wait=15
@@ -1456,7 +1721,7 @@ _recover() {
     fi
   else
     echo "Recovering $target [claude]..."
-    tmux send-keys -t "$ORCH_SESSION:$target" "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
+    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
     _log_history "RECOVER $target"
 
     local max_wait=15
@@ -1480,112 +1745,15 @@ _recover() {
 # Start orchestrator: create master session, open Claude, Kimi, or Codex in window 0
 _orchestra() {
   _ensure_session || return 1
+  _ensure_orchestrator_prompt_files || return 1
 
   # Check which orchestrator to use (default: Claude)
   local orch_ai="${ORCHESTRA_AI:-claude}"
-  local orch_bin=""
-  local orch_file=""
-
-  if [[ "$orch_ai" == "codex" ]]; then
-    _require_codex || return 1
-    orch_bin="$CODEX_BIN"
-    orch_file="$ORCH_DIR/CODEX.md"
-    if [[ ! -f "$orch_file" ]]; then
-      cat > "$orch_file" << 'CODEXEOF'
-# Orchestra - Codex Orchestrator
-
-## Communication
-- Be short and direct
-- Report actions taken, not plans
-
-## Role
-You are the orchestrator Codex. You manage multiple Codex worker sessions from this single terminal via tmux windows.
-
-## Startup Sequence
-1. Run `~/.local/bin/dev status` to check current state
-2. Ask the user which projects they want to work on
-3. Start sessions with: `dev codex start <project>`
-
-## Commands (always use full path)
-```bash
-~/.local/bin/dev codex start <alias>      # Start a Codex session
-~/.local/bin/dev send <alias> "message"   # Send a task/message
-~/.local/bin/dev peek <alias>             # Read worker's recent output
-~/.local/bin/dev broadcast "message"      # Send to ALL active AI sessions
-~/.local/bin/dev kill <alias>             # Kill a project window
-~/.local/bin/dev list                     # List all projects
-~/.local/bin/dev status                   # Show active windows
-~/.local/bin/dev done <alias>             # Check if worker is idle
-~/.local/bin/dev wait <alias>             # Wait for worker to finish
-```
-
-## Task Lifecycle
-1. **Send task:** `dev send <alias> "detailed task description"`
-2. **Wait:** `sleep 20`
-3. **Check output:** `dev peek <alias>` to read the worker's response
-4. **Still working?** If worker is still busy, `sleep 15` and `dev peek` again
-5. **Report to user:** Summarize what the worker did or said
-
-## Rules
-- Max $MAX_AI_SESSIONS concurrent AI sessions total
-- Include full context in every message to workers
-- Workers have zero knowledge of this conversation
-- Always tell the user the window number after starting
-CODEXEOF
-    fi
-  elif [[ "$orch_ai" == "kimi" ]]; then
-    _require_kimi || return 1
-    orch_bin="$KIMI_BIN"
-    orch_file="$ORCH_DIR/KIMI.md"
-    # Create KIMI.md if it doesn't exist
-    if [[ ! -f "$orch_file" ]]; then
-      cat > "$orch_file" << 'KIMIEOF'
-# Orchestra - Kimi CLI Orchestrator
-
-## Communication
-- Be short and direct
-- Report actions taken, not plans
-
-## Role
-You are the orchestrator Kimi. You manage multiple Kimi CLI worker sessions from this single terminal via tmux windows.
-
-## Startup Sequence
-1. Run `~/.local/bin/dev status` to check current state
-2. Ask the user which projects they want to work on
-3. Start sessions with: `dev kimi start <project>`
-
-## Commands (always use full path via Bash tool)
-```bash
-~/.local/bin/dev kimi start <alias>       # Start a Kimi session
-~/.local/bin/dev send <alias> "message"   # Send a task/message (auto-detects AI type)
-~/.local/bin/dev peek <alias>             # Read worker's recent output
-~/.local/bin/dev broadcast "message"      # Send to ALL active AI sessions
-~/.local/bin/dev kill <alias>             # Kill a project window
-~/.local/bin/dev list                     # List all projects
-~/.local/bin/dev status                   # Show active windows
-~/.local/bin/dev done <alias>             # Check if worker is idle
-~/.local/bin/dev wait <alias>             # Wait for worker to finish
-```
-
-## Task Lifecycle
-1. **Send task:** `dev send <alias> "detailed task description"`
-2. **Wait:** `sleep 20`
-3. **Check output:** `dev peek <alias>` to read the worker's response
-4. **Still working?** If worker is still busy, `sleep 15` and `dev peek` again
-5. **Report to user:** Summarize what the worker did or said
-
-## Rules
-- Max $MAX_AI_SESSIONS concurrent AI sessions (Claude + Kimi combined)
-- Include full context in every message to workers
-- Workers have zero knowledge of this conversation
-- Always tell the user the window number after starting
-KIMIEOF
-    fi
-  else
-    _require_claude || return 1
-    orch_bin="$CLAUDE_BIN"
-    orch_file="$ORCH_DIR/CLAUDE.md"
-  fi
+  case "$orch_ai" in
+    codex) _require_codex || return 1 ;;
+    kimi)  _require_kimi || return 1 ;;
+    *)     _require_claude || return 1 ;;
+  esac
 
   # Check what's currently running in orchestra window
   local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
@@ -1616,13 +1784,14 @@ KIMIEOF
   # Launch AI if not already running
   if [[ "$current_ai" != "$orch_ai" ]]; then
     if [[ "$orch_ai" == "kimi" ]]; then
-      tmux send-keys -t "$ORCH_SESSION:orchestra" "cd '$ORCH_DIR' && '$orch_bin'" Enter
+      tmux send-keys -t "$ORCH_SESSION:orchestra" "$(_orchestrator_launch_cmd kimi)" Enter
+      _send_orchestrator_bootstrap_if_needed "$ORCH_SESSION:orchestra" "kimi"
       echo "Starting Kimi orchestrator..."
     elif [[ "$orch_ai" == "codex" ]]; then
-      tmux send-keys -t "$ORCH_SESSION:orchestra" "cd '$ORCH_DIR' && '$orch_bin'" Enter
+      tmux send-keys -t "$ORCH_SESSION:orchestra" "$(_orchestrator_launch_cmd codex)" Enter
       echo "Starting Codex orchestrator..."
     else
-      tmux send-keys -t "$ORCH_SESSION:orchestra" "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; cd '$ORCH_DIR' && '$orch_bin' --dangerously-skip-permissions" Enter
+      tmux send-keys -t "$ORCH_SESSION:orchestra" "$(_orchestrator_launch_cmd claude)" Enter
       echo "Starting Claude orchestrator..."
     fi
     sleep 1
