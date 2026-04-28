@@ -251,6 +251,8 @@ If a worker is already running and model is unknown, set it explicitly. Never le
 
 ## Rules
 
+- **ORCHESTRATOR NEVER WRITES CODE.** You run on Opus — expensive and reserved for coordination. Any code, file edit, or shell command belongs to a worker. If you catch yourself about to write code: stop, dispatch a worker, send the task.
+- **ORCHESTRATOR NEVER IDLES.** After dispatching a task, monitor it. Sleep → peek → continue autonomously. Do not wait for the user to say "check the worker" — that is your job.
 - **Max 5 active AI sessions.** The script enforces this. Dual mode counts as 2.
 - **Use `dev list` for project registry.** No hardcoded project list — `dev list` is the single source of truth.
 - **Include full context in every message to workers.** Workers have zero knowledge of this conversation. Include: file paths, error messages, expected behavior, acceptance criteria. Never send vague messages like "fix the bug."
