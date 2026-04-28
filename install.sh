@@ -45,7 +45,7 @@ mkdir -p "${CONFIG_DIR}"
 mkdir -p "${CONFIG_DIR}/orchestrator"
 
 # ── Install worker-safe prompt and shared rule files ─────────────
-for f in AGENTS.md WORKER.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
+for f in AGENTS.md WORKER.md CLAUDE.md KIMI.md CODEX.md FORGE.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
   if [[ -f "${ORCH_DIR}/${f}" ]]; then
     cp "${ORCH_DIR}/${f}" "${CONFIG_DIR}/${f}"
     echo "Installed: ${CONFIG_DIR}/${f}"
@@ -53,7 +53,7 @@ for f in AGENTS.md WORKER.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SE
 done
 
 # ── Install dedicated orchestrator prompt directory ──────────────
-for f in AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
+for f in AGENTS.md CLAUDE.md KIMI.md CODEX.md FORGE.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
   if [[ -f "${ORCH_DIR}/orchestrator/${f}" ]]; then
     cp "${ORCH_DIR}/orchestrator/${f}" "${CONFIG_DIR}/orchestrator/${f}"
     echo "Installed: ${CONFIG_DIR}/orchestrator/${f}"
