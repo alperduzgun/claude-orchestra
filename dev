@@ -213,26 +213,26 @@ _update() {
   fi
 
   echo "Fetching from origin..."
-  if ! git -C "$REPO_ROOT" fetch origin 2>&1 | grep -v "^$"; then
+  if ! git -C "$REPO_ROOT" fetch --tags origin 2>&1 | grep -v "^$"; then
     echo "ERROR: Could not reach remote. Check your connection."
     return 1
   fi
 
-  local current_hash remote_hash current_date remote_date ahead_count
-  current_hash=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)
-  current_date=$(git -C "$REPO_ROOT" log -1 --format="%ad" --date=short 2>/dev/null)
-  remote_hash=$(git -C "$REPO_ROOT" rev-parse --short origin/main 2>/dev/null)
-  remote_date=$(git -C "$REPO_ROOT" log -1 origin/main --format="%ad" --date=short 2>/dev/null)
+  local current_tag latest_tag ahead_count
+  current_tag=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
+  latest_tag=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 origin/main 2>/dev/null || echo "")
   ahead_count=$(git -C "$REPO_ROOT" rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
 
-  if [[ "$current_hash" == "$remote_hash" ]]; then
-    echo "Already up to date (commit ${current_hash} — ${current_date})."
+  if [[ "$ahead_count" == "0" ]]; then
+    echo "Already up to date${current_tag:+ ($current_tag)}."
     echo ""
     return 0
   fi
 
-  echo "Current:  ${current_hash} (${current_date})"
-  echo "Latest:   ${remote_hash} (${remote_date})  [${ahead_count} new commits]"
+  local current_label="${current_tag:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)}"
+  local latest_label="${latest_tag:-$(git -C "$REPO_ROOT" rev-parse --short origin/main 2>/dev/null)}"
+  echo "Current:  ${current_label}"
+  echo "Latest:   ${latest_label}  [${ahead_count} new commits]"
   echo ""
   echo "What's new:"
   git -C "$REPO_ROOT" log --oneline HEAD..origin/main | head -10 | sed 's/^/  /'
@@ -264,7 +264,7 @@ _update() {
     echo "  [FAIL] git pull — resolve conflicts in ${REPO_ROOT} and retry"
     return 1
   fi
-  echo "  [ok]  git pull (${ahead_count} commits)"
+  echo "  [ok]  git pull${latest_label:+ → $latest_label} (${ahead_count} commits)"
 
   if [[ "$dev_mode" == "copy" ]]; then
     if cp "${REPO_ROOT}/dev" "${HOME}/.local/bin/dev" && chmod +x "${HOME}/.local/bin/dev"; then
