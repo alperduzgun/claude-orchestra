@@ -50,6 +50,11 @@ fi
 ln -s "${ORCH_DIR}/dev" "${INSTALL_DIR}/dev"
 echo "Installed: ${INSTALL_DIR}/dev -> ${ORCH_DIR}/dev"
 
+# Store repo path so 'dev update' can find it later
+orch_conf="${CONFIG_DIR}/orchestra.conf"
+{ grep -v "^ORCHESTRA_REPO=" "$orch_conf" 2>/dev/null || true; echo "ORCHESTRA_REPO=\"${ORCH_DIR}\""; } > "${orch_conf}.tmp" && mv "${orch_conf}.tmp" "$orch_conf"
+echo "Saved: repo path -> ${orch_conf}"
+
 # ── Create empty projects.conf if missing ────────────────────────
 if [[ ! -f "${CONFIG_DIR}/projects.conf" ]]; then
   cat > "${CONFIG_DIR}/projects.conf" <<EOF

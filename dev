@@ -152,6 +152,159 @@ _remove() {
   echo "Removed: $alias"
 }
 
+_find_repo_root() {
+  # Method 1: ~/.local/bin/dev is a symlink to repo
+  local dev_link="${HOME}/.local/bin/dev"
+  if [[ -L "$dev_link" ]]; then
+    local real_path
+    real_path=$(readlink "$dev_link" 2>/dev/null)
+    [[ -n "$real_path" ]] && { dirname "$real_path"; return; }
+  fi
+  # Method 2: stored config from install.sh
+  local stored_conf="${CONFIG_DIR}/orchestra.conf"
+  if [[ -f "$stored_conf" ]]; then
+    local stored_repo
+    stored_repo=$(grep "^ORCHESTRA_REPO=" "$stored_conf" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | sed "s|^~|$HOME|")
+    if [[ -n "$stored_repo" && -d "${stored_repo}/.git" ]]; then
+      echo "$stored_repo"; return
+    fi
+  fi
+  # Method 3: common locations
+  for candidate in \
+    "${HOME}/claude-orchestra" \
+    "${HOME}/Development/orchestra" \
+    "${HOME}/.config/orchestra-repo" \
+    "${HOME}/projects/claude-orchestra"; do
+    if [[ -d "${candidate}/.git" && -f "${candidate}/dev" ]]; then
+      echo "$candidate"; return
+    fi
+  done
+  echo ""
+}
+
+_update() {
+  local REPO_ROOT
+  REPO_ROOT=$(_find_repo_root)
+
+  if [[ -z "$REPO_ROOT" ]]; then
+    echo ""
+    echo "Cannot find orchestra repository."
+    echo "~/.local/bin/dev appears to be a copy, not a symlink — repo path unknown."
+    echo ""
+    echo "Fix (pick one):"
+    echo "  echo 'ORCHESTRA_REPO=\"~/claude-orchestra\"' >> ${CONFIG_DIR}/orchestra.conf"
+    echo "  (replace ~/claude-orchestra with your actual clone path)"
+    echo ""
+    echo "Or update manually:"
+    echo "  cd ~/claude-orchestra && git pull"
+    echo "  cp dev ~/.local/bin/dev && chmod +x ~/.local/bin/dev"
+    echo "  cp CLAUDE.md KIMI.md MODEL-SELECTION.md ${CONFIG_DIR}/"
+    return 1
+  fi
+
+  echo ""
+  echo "Orchestra Update"
+  echo "================"
+  echo ""
+
+  if ! command -v git &>/dev/null; then
+    echo "ERROR: git not found."
+    return 1
+  fi
+
+  echo "Fetching from origin..."
+  if ! git -C "$REPO_ROOT" fetch origin 2>&1 | grep -v "^$"; then
+    echo "ERROR: Could not reach remote. Check your connection."
+    return 1
+  fi
+
+  local current_hash remote_hash current_date remote_date ahead_count
+  current_hash=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)
+  current_date=$(git -C "$REPO_ROOT" log -1 --format="%ad" --date=short 2>/dev/null)
+  remote_hash=$(git -C "$REPO_ROOT" rev-parse --short origin/main 2>/dev/null)
+  remote_date=$(git -C "$REPO_ROOT" log -1 origin/main --format="%ad" --date=short 2>/dev/null)
+  ahead_count=$(git -C "$REPO_ROOT" rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
+
+  if [[ "$current_hash" == "$remote_hash" ]]; then
+    echo "Already up to date (commit ${current_hash} — ${current_date})."
+    echo ""
+    return 0
+  fi
+
+  echo "Current:  ${current_hash} (${current_date})"
+  echo "Latest:   ${remote_hash} (${remote_date})  [${ahead_count} new commits]"
+  echo ""
+  echo "What's new:"
+  git -C "$REPO_ROOT" log --oneline HEAD..origin/main | head -10 | sed 's/^/  /'
+  echo ""
+
+  local dev_mode="copy"
+  [[ -L "${HOME}/.local/bin/dev" ]] && dev_mode="symlink"
+
+  echo "Will update:"
+  [[ "$dev_mode" == "copy" ]] && echo "  dev             ~/.local/bin/dev  [overwrite]"
+  [[ "$dev_mode" == "symlink" ]] && echo "  dev             ~/.local/bin/dev  [symlink — auto via git pull]"
+  for f in CLAUDE.md KIMI.md MODEL-SELECTION.md; do
+    [[ -f "${REPO_ROOT}/${f}" ]] && echo "  ${f}  ${CONFIG_DIR}/${f}  [overwrite]"
+  done
+  echo ""
+  echo "Preserved (never touched):"
+  echo "  ${CONFIG_DIR}/projects.conf"
+  [[ -f "${HOME}/.config/ghostty/config" ]] && echo "  ~/.config/ghostty/config"
+  [[ -f "${HOME}/.tmux.conf" ]] && echo "  ~/.tmux.conf"
+  echo ""
+
+  read -p "Proceed? (y/N) " -n 1 -r; echo ""
+  [[ ! "$REPLY" =~ ^[Yy]$ ]] && { echo "Cancelled."; return 0; }
+
+  echo ""
+  echo "Updating..."
+
+  if ! git -C "$REPO_ROOT" pull origin main 2>&1 | tail -3; then
+    echo "  [FAIL] git pull — resolve conflicts in ${REPO_ROOT} and retry"
+    return 1
+  fi
+  echo "  [ok]  git pull (${ahead_count} commits)"
+
+  if [[ "$dev_mode" == "copy" ]]; then
+    if cp "${REPO_ROOT}/dev" "${HOME}/.local/bin/dev" && chmod +x "${HOME}/.local/bin/dev"; then
+      echo "  [ok]  dev -> ~/.local/bin/dev"
+      # Save repo path for future updates
+      local conf="${CONFIG_DIR}/orchestra.conf"
+      { grep -v "^ORCHESTRA_REPO=" "$conf" 2>/dev/null || true; echo "ORCHESTRA_REPO=\"${REPO_ROOT}\""; } > "${conf}.tmp" && mv "${conf}.tmp" "$conf"
+    else
+      echo "  [WARN] dev copy failed — update manually: cp ${REPO_ROOT}/dev ~/.local/bin/dev"
+    fi
+  else
+    echo "  [ok]  dev (symlink — already updated)"
+  fi
+
+  for f in CLAUDE.md KIMI.md MODEL-SELECTION.md; do
+    if [[ -f "${REPO_ROOT}/${f}" ]]; then
+      cp "${REPO_ROOT}/${f}" "${CONFIG_DIR}/${f}" && echo "  [ok]  ${f} -> ${CONFIG_DIR}/${f}"
+    fi
+  done
+
+  echo ""
+  echo "Update complete."
+  echo ""
+
+  if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
+    local orch_cmd
+    orch_cmd=$(tmux list-panes -t "${ORCH_SESSION}:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
+    if [[ "$orch_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
+      echo "Orchestrator is running with the OLD CLAUDE.md."
+      echo "Restart it to apply new prompts: Ctrl+C in Ctrl+A 0, then run: dev"
+      echo ""
+    fi
+    local workers
+    workers=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null | grep -v "^orchestra$" | tr '\n' ' ')
+    [[ -n "$workers" ]] && echo "Active workers continue unaffected: ${workers}"
+  else
+    echo "Run 'dev' to start with the updated orchestrator."
+  fi
+}
+
 # Helper: count active Claude windows in the orchestra session
 _claude_count() {
   local count=0
@@ -1191,6 +1344,7 @@ case "$1" in
   done)           _done "$2" ;;
   add)            _add "$2" "$3" ;;
   remove|rm)      _remove "$2" ;;
+  update|up)      _update ;;
   help|-h)
     echo "Usage:"
     echo "  dev                        Start Claude orchestrator (shortcut)"
@@ -1212,6 +1366,7 @@ case "$1" in
     echo "  dev run <project> <task>   Run non-interactive task (claude --print)"
     echo "  dev recover <project>      Recover crashed session"
     echo "  dev recover --all          Recover all crashed sessions"
+    echo "  dev update                 Update orchestra to the latest version"
     echo "  dev done <project>         Check if worker is idle or working"
     echo "  dev notify <title> <msg>   Send a desktop notification (macOS + Linux)"
     echo "  dev kill <project>         Kill a project window"
