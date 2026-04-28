@@ -314,7 +314,7 @@ _update() {
     fi
   done
 
-  for f in AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md; do
+  for f in AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md kimi-orchestrator-agent.yaml kimi-worker-agent.yaml; do
     if [[ -n "$prompt_source_root" && -f "${prompt_source_root}/orchestrator/${f}" ]]; then
       cp "${prompt_source_root}/orchestrator/${f}" "${ORCH_DIR}/${f}" && echo "  [ok]  orchestrator/${f} → ${ORCH_DIR}/${f}"
     elif curl -sf "${raw_base}/orchestrator/${f}" -o "${ORCH_DIR}/${f}" 2>/dev/null; then
@@ -532,7 +532,7 @@ _worker_launch_cmd() {
   local prompt="$(_worker_start_prompt)"
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
-    codex)  echo "'$CODEX_BIN'" ;;  # no prompt arg; CODEX.md in working dir is read automatically
+    codex)  echo "cd '$CONFIG_DIR' && '$CODEX_BIN' -C '$dir'" ;;  # CONFIG_DIR/CODEX.md = worker role; -C keeps project as working root
     kimi)   echo "'$KIMI_BIN' --agent-file '$ORCH_DIR/kimi-worker-agent.yaml'" ;;  # agent spec sets system context via KIMI.md
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
