@@ -717,6 +717,11 @@ _is_done() {
   [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]] && is_ai=true
   [[ "$is_ai" == false ]] && return 2
 
+  # NOTE: Forge state detection is best-effort. Forge TUI idle/active
+  # patterns are not yet fully characterized. If Forge appears idle but
+  # this function reports working (or vice versa), capture the TUI output
+  # and update the patterns below.
+
   # Capture last 10 lines and check for active work indicators
   local output=$(tmux capture-pane -t "$ORCH_SESSION:$name" -p -S -10 2>/dev/null | \
     sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\xc2\xa0' | sed 's/[[:cntrl:]]//g')
@@ -749,6 +754,16 @@ _is_done() {
     if ! echo "$after_prompt" | grep -qE '(⠙|⠹|⠸|Using)'; then
       return 0
     fi
+  fi
+
+  # Forge: if no active indicators matched above, check for idle prompt.
+  # Forge uses a native TUI; common prompt chars are > or $ at line start.
+  if [[ "$ai_type" == "forge" ]]; then
+    if echo "$output" | grep -qE '^\s*[>\$]\s'; then
+      return 0
+    fi
+    # No recognizable prompt — conservative fallback to working
+    return 1
   fi
 
   # Unknown — assume still working
@@ -1270,7 +1285,7 @@ _start_forge() {
     local forge_active=$(_forge_count)
     local total_active=$((claude_active + kimi_active + codex_active + forge_active))
     if [[ $total_active -ge $MAX_AI_SESSIONS ]]; then
-      echo "ERROR: Max $MAX_AI_SESSIONS active AI sessions reached."
+      echo "ERROR: Max $MAX_AI_SESSIONS active AI sessions reached (Claude: $claude_active, Kimi: $kimi_active, Codex: $codex_active, Forge: $forge_active)."
       echo "Kill one first: dev kill <project>"
       return 1
     fi
@@ -1303,7 +1318,7 @@ _start_forge() {
   fi
 }
 
-# Send a message to an AI window (Claude, Kimi, or Codex)
+# Send a message to an AI window (Claude, Kimi, Codex, or Forge)
 _send() {
   local name=""
   local target="left"
