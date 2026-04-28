@@ -532,7 +532,7 @@ _worker_launch_cmd() {
   local prompt="$(_worker_start_prompt)"
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
-    codex)  echo "'$CODEX_BIN' \"$prompt\"" ;;
+    codex)  echo "'$CODEX_BIN' \"$prompt\"" ;;  # positional arg = initial prompt (verified with codex --help)
     kimi)   echo "'$KIMI_BIN'" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
