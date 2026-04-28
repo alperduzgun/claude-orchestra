@@ -413,7 +413,7 @@ _ai_launch_cmd() {
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions" ;;
     kimi)   echo "'$KIMI_BIN'" ;;
-    codex)  echo "codex exec" ;;
+    codex)  echo "codex" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
     *)      return 1 ;;
@@ -790,11 +790,11 @@ _start_dual() {
   # Split right + launch RIGHT AI
   tmux split-window -h -t "$ORCH_SESSION:$name" -c "$dir"
   sleep 0.3
-  tmux send-keys -t "$ORCH_SESSION:$name.2" "$right_cmd" Enter
+  tmux send-keys -t "$ORCH_SESSION:$name.1" "$right_cmd" Enter
   sleep 2
 
   # Select left pane as active
-  tmux select-pane -t "$ORCH_SESSION:$name.1"
+  tmux select-pane -t "$ORCH_SESSION:$name.0"
 
   local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
   _track_ai_type "$name" "dual:${left_ai}:${right_ai}"
@@ -913,15 +913,15 @@ _send() {
   fi
 
   # Determine target pane
-  local pane_target="$ORCH_SESSION:$name.1"
+  local pane_target="$ORCH_SESSION:$name.0"
   if [[ "$target" == "right" ]]; then
-    pane_target="$ORCH_SESSION:$name.2"
+    pane_target="$ORCH_SESSION:$name.1"
   fi
 
   # Detect which AI is actually running in the target pane (for logging).
-  # Pane indices: 1 = left, 2 = right (after split-window -h).
-  local pane_idx=1
-  [[ "$target" == "right" ]] && pane_idx=2
+  # Pane indices: 0 = left, 1 = right (after split-window -h, pane-base-index=0).
+  local pane_idx=0
+  [[ "$target" == "right" ]] && pane_idx=1
   local ai_label=$(_detect_pane_ai "$name" "$pane_idx")
   [[ -z "$ai_label" ]] && ai_label="unknown"
   local ai_type="$ai_label"
@@ -1049,8 +1049,8 @@ _peek() {
     return 1
   fi
 
-  local pane_target="$ORCH_SESSION:$name.1"
-  [[ "$target" == "right" ]] && pane_target="$ORCH_SESSION:$name.2"
+  local pane_target="$ORCH_SESSION:$name.0"
+  [[ "$target" == "right" ]] && pane_target="$ORCH_SESSION:$name.1"
 
   _log_history "PEEK $name [$target]"
 
