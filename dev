@@ -1001,7 +1001,8 @@ _start_claude() {
     _track_ai_type "$name" "claude"
     _log_history "START $name [window $win_index]"
     echo "Ready: $name [claude] [window $win_index] — switch with Ctrl+A $win_index"
-    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "claude"
+    # No bootstrap needed: _worker_launch_cmd claude already embeds
+    # the prompt via --append-system-prompt.
   fi
 }
 
@@ -1057,7 +1058,8 @@ _start_dual() {
   tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$(_window_logfile "$name")'"
   sleep 0.5
   tmux send-keys -t "$ORCH_SESSION:$name" "$left_cmd" Enter
-  _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "$left_ai"
+  # Bootstrap only for AIs that don't embed prompts at launch
+  [[ "$left_ai" == "kimi" ]] && _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "$left_ai"
 
   # Best-effort wait for left AI to appear (process detection is per-AI, keep it simple)
   sleep 2
@@ -1072,7 +1074,8 @@ _start_dual() {
   right_pane_target=$(_pane_target_for_side "$name" "right") || { echo "ERROR: Failed to resolve right pane for $name"; return 1; }
   tmux pipe-pane -t "$right_pane_target" -o "cat >> '$(_pane_logfile_for_side "$name" "right")'"
   tmux send-keys -t "$right_pane_target" "$right_cmd" Enter
-  _send_worker_bootstrap_if_needed "$right_pane_target" "$right_ai"
+  # Bootstrap only for AIs that don't embed prompts at launch
+  [[ "$right_ai" == "kimi" ]] && _send_worker_bootstrap_if_needed "$right_pane_target" "$right_ai"
   sleep 2
 
   # Select left pane as active
@@ -1669,7 +1672,8 @@ _recover() {
             _log_history "RECOVER-KIMI $wname"
           else
             echo "Recovering $wname [claude]..."
-            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
+            # Use plain launch for recovery; --append-system-prompt conflicts with --resume
+            tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
             claude_recovered=$((claude_recovered + 1))
             _log_history "RECOVER $wname"
           fi
@@ -1759,7 +1763,8 @@ _recover() {
     fi
   else
     echo "Recovering $target [claude]..."
-    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
+    # Use plain launch for recovery; --append-system-prompt conflicts with --resume
+    tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --resume" Enter
     _log_history "RECOVER $target"
 
     local max_wait=15
