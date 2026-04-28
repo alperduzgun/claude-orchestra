@@ -7,15 +7,15 @@
 ```
 Multi-step reasoning, architecture decisions, multi-file synthesis?
   → Claude: Opus
-  → Codex: GPT-5.5
+  → Codex: o3 / o1 (strategic tier)
 
 Implementation, code review, real engineering work?
   → Claude: Sonnet
-  → Codex: gpt-5.4
+  → Codex: gpt-4.1 / gpt-4o (engineering tier)
 
 Boilerplate, format, extract, watch, summarize?
   → Claude: Haiku
-  → Codex: gpt-5.4-mini
+  → Codex: gpt-4o-mini / o4-mini (cheap tier)
 ```
 
 If unsure between two: pick the cheaper one. If output is bad, escalate.
@@ -28,9 +28,9 @@ Use the same task routing logic across AI families:
 
 | Task shape | Claude family | Codex family |
 |------------|---------------|--------------|
-| Strategic reasoning, orchestration, architecture | Opus | GPT-5.5 |
-| Engineering implementation and review | Sonnet | gpt-5.4 |
-| Cheap structured work, watch loops, formatting | Haiku | gpt-5.4-mini |
+| Strategic reasoning, orchestration, architecture | Opus | o3 / o1 |
+| Engineering implementation and review | Sonnet | gpt-4.1 / gpt-4o |
+| Cheap structured work, watch loops, formatting | Haiku | gpt-4o-mini / o4-mini |
 
 The names differ. The operating principle does not.
 
@@ -202,7 +202,7 @@ Cost: ~5x cheaper than all-Opus, ~95% quality maintained.
 
 Codex does not use the Opus / Sonnet / Haiku product names, but the same separation still applies.
 
-### GPT-5.5 — Strategic Layer
+### o3 / o1 — Strategic Layer
 
 **Use for:**
 - orchestration across multiple workers or projects
@@ -217,7 +217,7 @@ Codex does not use the Opus / Sonnet / Haiku product names, but the same separat
 - status formatting or log parsing
 - repetitive watch loops
 
-### gpt-5.4 — Engineering Default
+### gpt-4.1 / gpt-4o — Engineering Default
 
 **Use for:**
 - feature implementation
@@ -229,7 +229,7 @@ Codex does not use the Opus / Sonnet / Haiku product names, but the same separat
 
 **This is the default Codex worker model.**
 
-### gpt-5.4-mini — Cheap, Fast, High-Frequency
+### gpt-4o-mini / o4-mini — Cheap, Fast, High-Frequency
 
 **Use for:**
 - status checks
@@ -251,19 +251,19 @@ Within the Codex family, adjust reasoning effort before changing models:
 
 | Situation | Model | Reasoning |
 |-----------|-------|-----------|
-| Quick lookup, extraction, watch | gpt-5.4-mini | low / medium |
-| Normal engineering task | gpt-5.4 | medium |
-| Hard bug or tricky refactor in one system | gpt-5.4 or GPT-5.5 | high |
-| Cross-system design or orchestration | GPT-5.5 | high / xhigh |
+| Quick lookup, extraction, watch | gpt-4o-mini / o4-mini | low / medium |
+| Normal engineering task | gpt-4.1 / gpt-4o | medium |
+| Hard bug or tricky refactor in one system | gpt-4.1 / gpt-4o or o3 / o1 | high |
+| Cross-system design or orchestration | o3 / o1 | high / xhigh |
 
 Rule of thumb:
 - Raise reasoning before raising model when the task is still in the same tier.
 - Raise model when the task changes tier.
 
 Examples:
-- `gpt-5.4` with `high` for a difficult implementation bug
-- `GPT-5.5` with `medium` or `high` for architecture planning
-- `gpt-5.4-mini` with `low` for continuous status polling
+- `gpt-4.1` with `high` for a difficult implementation bug
+- `o3` with `medium` or `high` for architecture planning
+- `gpt-4o-mini` with `low` for continuous status polling
 
 ---
 
@@ -274,7 +274,7 @@ When using `dev start <alias>` or similar multi-worker setups:
 - **Orchestrator session (current Claude Code instance):** Opus
 - **Worker sessions (second Claude Code instance):** Sonnet
 - **Background watchers, status aggregators:** Haiku
-- **Codex equivalent:** orchestrator = GPT-5.5, worker = gpt-5.4, watcher = gpt-5.4-mini
+- **Codex equivalent:** orchestrator = o3 / o1, worker = gpt-4.1 / gpt-4o, watcher = gpt-4o-mini / o4-mini
 - **Note:** Kimi and Qwen run at their own model tier and do not map directly to these names
 
 Override only when:
@@ -282,8 +282,8 @@ Override only when:
 - Worker doing pure boilerplate → temporarily Haiku
 
 For Codex:
-- Worker doing complex debug → temporarily GPT-5.5 or gpt-5.4 with `high`
-- Worker doing pure boilerplate → temporarily gpt-5.4-mini
+- Worker doing complex debug → temporarily o3 / o1 or gpt-4.1 / gpt-4o with `high`
+- Worker doing pure boilerplate → temporarily gpt-4o-mini / o4-mini
 
 ---
 
@@ -307,17 +307,17 @@ Before any non-trivial task, ask:
 
 1. **Does this require synthesis across multiple sources/files?**
    Claude → Opus
-   Codex → GPT-5.5
+   Codex → o3 / o1
 2. **Does this require writing real code or making engineering judgment?**
    Claude → Sonnet
-   Codex → gpt-5.4
+   Codex → gpt-4.1 / gpt-4o
 3. **Is this format/extract/watch/summarize?**
    Claude → Haiku
-   Codex → gpt-5.4-mini
+   Codex → gpt-4o-mini / o4-mini
 
 If still unsure:
 - Claude path: start with Sonnet, escalate to Opus only if quality is insufficient
-- Codex path: start with gpt-5.4, escalate to GPT-5.5 only if quality is insufficient
+- Codex path: start with gpt-4.1 / gpt-4o, escalate to o3 / o1 only if quality is insufficient
 
 ---
 
