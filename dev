@@ -499,7 +499,7 @@ _ai_require() {
   case "$ai" in
     claude) _require_claude ;;
     kimi)   _require_kimi ;;
-    codex)  command -v codex  >/dev/null || { echo "ERROR: codex not found in PATH"; return 1; } ;;
+    codex)  _require_codex ;;
     qwen)   command -v qwen   >/dev/null || { echo "ERROR: qwen not found in PATH"; return 1; } ;;
     gemini) command -v gemini >/dev/null || { echo "ERROR: gemini not found in PATH"; return 1; } ;;
     *)      echo "ERROR: unknown AI type: $ai (supported: claude, codex, kimi, qwen, gemini)"; return 1 ;;
