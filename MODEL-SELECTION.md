@@ -1,4 +1,4 @@
-# Model Selection Rule — Opus / Sonnet / Haiku
+# Model Selection Rule — Claude and Codex
 
 **CRITICAL:** Use the right model for the right task. Don't default to the most capable — default to the most appropriate.
 
@@ -6,16 +6,33 @@
 
 ```
 Multi-step reasoning, architecture decisions, multi-file synthesis?
-  → Opus (slow, expensive, deep)
+  → Claude: Opus
+  → Codex: GPT-5.5
 
 Implementation, code review, real engineering work?
-  → Sonnet (sweet spot, default for engineering)
+  → Claude: Sonnet
+  → Codex: gpt-5.4
 
 Boilerplate, format, extract, watch, summarize?
-  → Haiku (fast, cheap, sufficient)
+  → Claude: Haiku
+  → Codex: gpt-5.4-mini
 ```
 
 If unsure between two: pick the cheaper one. If output is bad, escalate.
+
+---
+
+## Crosswalk
+
+Use the same task routing logic across AI families:
+
+| Task shape | Claude family | Codex family |
+|------------|---------------|--------------|
+| Strategic reasoning, orchestration, architecture | Opus | GPT-5.5 |
+| Engineering implementation and review | Sonnet | gpt-5.4 |
+| Cheap structured work, watch loops, formatting | Haiku | gpt-5.4-mini |
+
+The names differ. The operating principle does not.
 
 ---
 
@@ -181,6 +198,75 @@ Cost: ~5x cheaper than all-Opus, ~95% quality maintained.
 
 ---
 
+## Codex Mapping
+
+Codex does not use the Opus / Sonnet / Haiku product names, but the same separation still applies.
+
+### GPT-5.5 — Strategic Layer
+
+**Use for:**
+- orchestration across multiple workers or projects
+- architecture and tradeoff decisions
+- complex debugging with competing hypotheses
+- multi-source review and synthesis
+- spec design and acceptance criteria work
+
+**Don't use for:**
+- routine file edits
+- simple bug fixes with known root cause
+- status formatting or log parsing
+- repetitive watch loops
+
+### gpt-5.4 — Engineering Default
+
+**Use for:**
+- feature implementation
+- code review with behavioral judgment
+- writing and fixing tests
+- medium-complexity debugging
+- refactors inside a bounded area
+- documentation with technical substance
+
+**This is the default Codex worker model.**
+
+### gpt-5.4-mini — Cheap, Fast, High-Frequency
+
+**Use for:**
+- status checks
+- test output summaries
+- commit message drafts
+- PR description drafts
+- simple extraction tasks
+- grep-followed-by-format tasks
+- watch / probe / monitor loops
+
+**Don't use for:**
+- architecture decisions
+- code review requiring judgment
+- multi-file implementation
+
+### Codex Reasoning Effort
+
+Within the Codex family, adjust reasoning effort before changing models:
+
+| Situation | Model | Reasoning |
+|-----------|-------|-----------|
+| Quick lookup, extraction, watch | gpt-5.4-mini | low / medium |
+| Normal engineering task | gpt-5.4 | medium |
+| Hard bug or tricky refactor in one system | gpt-5.4 or GPT-5.5 | high |
+| Cross-system design or orchestration | GPT-5.5 | high / xhigh |
+
+Rule of thumb:
+- Raise reasoning before raising model when the task is still in the same tier.
+- Raise model when the task changes tier.
+
+Examples:
+- `gpt-5.4` with `high` for a difficult implementation bug
+- `GPT-5.5` with `medium` or `high` for architecture planning
+- `gpt-5.4-mini` with `low` for continuous status polling
+
+---
+
 ## Worker Session Defaults (Orchestra/Multi-Agent Pattern)
 
 When using `dev start <alias>` or similar multi-worker setups:
@@ -188,11 +274,16 @@ When using `dev start <alias>` or similar multi-worker setups:
 - **Orchestrator session (current Claude Code instance):** Opus
 - **Worker sessions (second Claude Code instance):** Sonnet
 - **Background watchers, status aggregators:** Haiku
-- **Note:** Kimi, Qwen, Codex workers run at their own model tier — Claude model selection does not apply to them
+- **Codex equivalent:** orchestrator = GPT-5.5, worker = gpt-5.4, watcher = gpt-5.4-mini
+- **Note:** Kimi and Qwen run at their own model tier and do not map directly to these names
 
 Override only when:
 - Worker doing complex debug → temporarily Opus
 - Worker doing pure boilerplate → temporarily Haiku
+
+For Codex:
+- Worker doing complex debug → temporarily GPT-5.5 or gpt-5.4 with `high`
+- Worker doing pure boilerplate → temporarily gpt-5.4-mini
 
 ---
 
@@ -214,11 +305,19 @@ Boilerplate that runs 100x/day on Opus = real money. Same task on Haiku = imperc
 
 Before any non-trivial task, ask:
 
-1. **Does this require synthesis across multiple sources/files?** → Opus
-2. **Does this require writing real code or making engineering judgment?** → Sonnet
-3. **Is this format/extract/watch/summarize?** → Haiku
+1. **Does this require synthesis across multiple sources/files?**
+   Claude → Opus
+   Codex → GPT-5.5
+2. **Does this require writing real code or making engineering judgment?**
+   Claude → Sonnet
+   Codex → gpt-5.4
+3. **Is this format/extract/watch/summarize?**
+   Claude → Haiku
+   Codex → gpt-5.4-mini
 
-If still unsure: start with Sonnet, escalate to Opus only if quality insufficient.
+If still unsure:
+- Claude path: start with Sonnet, escalate to Opus only if quality is insufficient
+- Codex path: start with gpt-5.4, escalate to GPT-5.5 only if quality is insufficient
 
 ---
 

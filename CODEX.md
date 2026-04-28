@@ -1,6 +1,6 @@
-# Orchestra Repo Claude Worker
+# Orchestra Repo Codex Worker
 
-This repo-root `CLAUDE.md` is intentionally worker-oriented so Claude sessions started in `~/.config/orchestra` do not inherit orchestrator-role rules.
+This repo-root `CODEX.md` is intentionally worker-oriented so Codex sessions started in `~/.config/orchestra` do not inherit orchestrator-role rules.
 
 ## Role
 

@@ -57,7 +57,7 @@ Steps:
    - Shows which files will be updated vs preserved
    - Asks for confirmation before proceeding
    - Preserves: projects.conf, Ghostty config, tmux config
-   - Updates: dev script, CLAUDE.md, KIMI.md, MODEL-SELECTION.md
+   - Updates: dev script, worker-safe root prompts, shared docs, and the dedicated `orchestrator/` prompt directory
 
 2. If dev update can't find the repo (installed as copy, not symlink):
    echo 'ORCHESTRA_REPO="~/claude-orchestra"' >> ~/.config/orchestra/orchestra.conf
@@ -132,7 +132,7 @@ chmod +x install.sh
 
 The installer will:
 1. Install `dev` to `~/.local/bin/` (symlinked from repo)
-2. Copy the orchestrator prompts (`CLAUDE.md` and `KIMI.md`) to `~/.config/orchestra/`
+2. Copy worker-safe root prompts plus shared rule files to `~/.config/orchestra/`, and copy orchestrator-only prompts to `~/.config/orchestra/orchestrator/`
 3. Create config at `~/.config/orchestra/projects.conf`
 4. **Ask** if you want Ghostty auto-restore (adds `command` to Ghostty config — works for all tabs/windows)
 5. **Ask** if you want Ghostty Cmd+number keybindings (switch windows with Cmd+0, Cmd+1...)
@@ -231,14 +231,14 @@ Environment variables (set in your shell profile):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCHESTRA_SESSION` | `devenv` | tmux session name |
-| `ORCHESTRA_DIR` | `~/.config/orchestra` | Where `CLAUDE.md`/`KIMI.md` lives (orchestrator working directory) |
+| `ORCHESTRA_DIR` | `~/.config/orchestra/orchestrator` | Dedicated orchestrator prompt directory and working directory for window 0 |
 | `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Where `projects.conf` lives (can differ from `ORCHESTRA_DIR`) |
 | `ORCHESTRA_AI` | `claude` | Orchestrator AI type: `claude` or `kimi` |
-| `MAX_AI_SESSIONS` | `3` | Max concurrent AI sessions (Claude + Kimi combined) |
+| `MAX_AI_SESSIONS` | `3` | Max concurrent AI sessions across Claude, Kimi, and Codex workers |
 | `CLAUDE_BIN` | auto-detected | Path to Claude Code binary |
 | `KIMI_BIN` | auto-detected | Path to Kimi CLI binary |
 
-> **Note:** `ORCHESTRA_DIR` and `ORCHESTRA_CONFIG_DIR` default to the same path but serve different purposes. `ORCHESTRA_DIR` controls where the orchestrator AI runs and reads its system prompt. `ORCHESTRA_CONFIG_DIR` controls where the project registry is stored.
+> **Note:** `ORCHESTRA_DIR` and `ORCHESTRA_CONFIG_DIR` now default to different paths. `ORCHESTRA_DIR` controls where the orchestrator AI runs and reads its dedicated prompt files. `ORCHESTRA_CONFIG_DIR` controls where the project registry, worker-safe root instructions, and shared config files live.
 
 ## Commands
 
