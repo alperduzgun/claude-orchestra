@@ -12,6 +12,9 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
+ORCHESTRA_VERSION="v1.3.2"
+ORCHESTRA_REPO_URL="https://github.com/alperduzgun/claude-orchestra"
+
 # Config
 CONFIG_DIR="${ORCHESTRA_CONFIG_DIR:-$HOME/.config/orchestra}"
 PROJECTS_FILE="$CONFIG_DIR/projects.conf"
@@ -183,72 +186,72 @@ _find_repo_root() {
 }
 
 _update() {
-  local REPO_ROOT
-  REPO_ROOT=$(_find_repo_root)
-
-  if [[ -z "$REPO_ROOT" ]]; then
-    echo ""
-    echo "Cannot find orchestra repository."
-    echo "~/.local/bin/dev appears to be a copy, not a symlink — repo path unknown."
-    echo ""
-    echo "Fix (pick one):"
-    echo "  echo 'ORCHESTRA_REPO=\"~/claude-orchestra\"' >> ${CONFIG_DIR}/orchestra.conf"
-    echo "  (replace ~/claude-orchestra with your actual clone path)"
-    echo ""
-    echo "Or update manually:"
-    echo "  cd ~/claude-orchestra && git pull"
-    echo "  cp dev ~/.local/bin/dev && chmod +x ~/.local/bin/dev"
-    echo "  cp CLAUDE.md KIMI.md MODEL-SELECTION.md ${CONFIG_DIR}/"
-    return 1
-  fi
-
   echo ""
   echo "Orchestra Update"
   echo "================"
   echo ""
 
-  if ! command -v git &>/dev/null; then
-    echo "ERROR: git not found."
+  if ! command -v curl &>/dev/null; then
+    echo "ERROR: curl is required for dev update."
     return 1
   fi
 
-  echo "Fetching from origin..."
-  if ! git -C "$REPO_ROOT" fetch --tags origin 2>&1 | grep -v "^$"; then
-    echo "ERROR: Could not reach remote. Check your connection."
+  # Check latest release from GitHub API
+  echo "Checking GitHub releases..."
+  local api_resp latest_version
+  api_resp=$(curl -sf "https://api.github.com/repos/alperduzgun/claude-orchestra/releases/latest" 2>/dev/null)
+  if [[ -z "$api_resp" ]]; then
+    echo "ERROR: Could not reach GitHub. Check your connection."
+    return 1
+  fi
+  latest_version=$(echo "$api_resp" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+  if [[ -z "$latest_version" ]]; then
+    echo "ERROR: Could not parse latest release."
     return 1
   fi
 
-  local current_tag latest_tag ahead_count
-  current_tag=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
-  latest_tag=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 origin/main 2>/dev/null || echo "")
-  ahead_count=$(git -C "$REPO_ROOT" rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
-
-  if [[ "$ahead_count" == "0" ]]; then
-    echo "Already up to date${current_tag:+ ($current_tag)}."
+  if [[ "$ORCHESTRA_VERSION" == "$latest_version" ]]; then
+    echo "Already up to date ($ORCHESTRA_VERSION)."
     echo ""
     return 0
   fi
 
-  local current_label="${current_tag:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)}"
-  local latest_label="${latest_tag:-$(git -C "$REPO_ROOT" rev-parse --short origin/main 2>/dev/null)}"
-  echo "Current:  ${current_label}"
-  echo "Latest:   ${latest_label}  [${ahead_count} new commits]"
+  echo "Current:  $ORCHESTRA_VERSION"
+  echo "Latest:   $latest_version"
   echo ""
-  echo "What's new:"
-  git -C "$REPO_ROOT" log --oneline HEAD..origin/main | head -10 | sed 's/^/  /'
-  echo ""
+
+  # Show changelog — try local repo first, fall back to GitHub release notes
+  local REPO_ROOT
+  REPO_ROOT=$(_find_repo_root)
+  if [[ -n "$REPO_ROOT" ]] && command -v git &>/dev/null; then
+    git -C "$REPO_ROOT" fetch --tags origin 2>/dev/null
+    local log
+    log=$(git -C "$REPO_ROOT" log --oneline "HEAD..origin/main" 2>/dev/null | head -10)
+    if [[ -n "$log" ]]; then
+      echo "What's new:"
+      echo "$log" | sed 's/^/  /'
+      echo ""
+    fi
+  else
+    local notes
+    notes=$(echo "$api_resp" | grep '"body"' | head -1 | cut -d'"' -f4 | sed 's/\\r\\n/\n/g; s/\\n/\n/g' | head -8)
+    if [[ -n "$notes" ]]; then
+      echo "What's new:"
+      echo "$notes" | sed 's/^/  /'
+      echo ""
+    fi
+  fi
 
   local dev_mode="copy"
   [[ -L "${HOME}/.local/bin/dev" ]] && dev_mode="symlink"
 
   echo "Will update:"
-  [[ "$dev_mode" == "copy" ]] && echo "  dev             ~/.local/bin/dev  [overwrite]"
-  [[ "$dev_mode" == "symlink" ]] && echo "  dev             ~/.local/bin/dev  [symlink — auto via git pull]"
-  for f in CLAUDE.md KIMI.md MODEL-SELECTION.md; do
-    [[ -f "${REPO_ROOT}/${f}" ]] && echo "  ${f}  ${CONFIG_DIR}/${f}  [overwrite]"
-  done
+  echo "  dev                    ~/.local/bin/dev"
+  echo "  CLAUDE.md              ${CONFIG_DIR}/CLAUDE.md"
+  echo "  KIMI.md                ${CONFIG_DIR}/KIMI.md"
+  echo "  MODEL-SELECTION.md     ${CONFIG_DIR}/MODEL-SELECTION.md"
   echo ""
-  echo "Preserved (never touched):"
+  echo "Preserved:"
   echo "  ${CONFIG_DIR}/projects.conf"
   [[ -f "${HOME}/.config/ghostty/config" ]] && echo "  ~/.config/ghostty/config"
   [[ -f "${HOME}/.tmux.conf" ]] && echo "  ~/.tmux.conf"
@@ -260,33 +263,39 @@ _update() {
   echo ""
   echo "Updating..."
 
-  if ! git -C "$REPO_ROOT" pull origin main 2>&1 | tail -3; then
-    echo "  [FAIL] git pull — resolve conflicts in ${REPO_ROOT} and retry"
-    return 1
-  fi
-  echo "  [ok]  git pull${latest_label:+ → $latest_label} (${ahead_count} commits)"
+  local raw_base="https://raw.githubusercontent.com/alperduzgun/claude-orchestra/${latest_version}"
+  local ok=true
 
-  if [[ "$dev_mode" == "copy" ]]; then
-    if cp "${REPO_ROOT}/dev" "${HOME}/.local/bin/dev" && chmod +x "${HOME}/.local/bin/dev"; then
-      echo "  [ok]  dev -> ~/.local/bin/dev"
-      # Save repo path for future updates
-      local conf="${CONFIG_DIR}/orchestra.conf"
-      { grep -v "^ORCHESTRA_REPO=" "$conf" 2>/dev/null || true; echo "ORCHESTRA_REPO=\"${REPO_ROOT}\""; } > "${conf}.tmp" && mv "${conf}.tmp" "$conf"
+  # Update dev script
+  if [[ "$dev_mode" == "symlink" ]] && [[ -n "$REPO_ROOT" ]] && command -v git &>/dev/null; then
+    if git -C "$REPO_ROOT" pull origin main 2>&1 | tail -3; then
+      echo "  [ok]  dev → $latest_version  (git pull)"
     else
-      echo "  [WARN] dev copy failed — update manually: cp ${REPO_ROOT}/dev ~/.local/bin/dev"
+      echo "  [WARN] git pull failed — downloading directly..."
+      curl -sf "${raw_base}/dev" -o "${HOME}/.local/bin/dev" && chmod +x "${HOME}/.local/bin/dev" \
+        && echo "  [ok]  dev → $latest_version  (direct download)" \
+        || { echo "  [FAIL] Could not update dev script."; ok=false; }
     fi
   else
-    echo "  [ok]  dev (symlink — already updated)"
+    curl -sf "${raw_base}/dev" -o "${HOME}/.local/bin/dev" && chmod +x "${HOME}/.local/bin/dev" \
+      && echo "  [ok]  dev → $latest_version" \
+      || { echo "  [FAIL] Could not download dev script."; ok=false; }
+    # Also pull local repo if present, best-effort
+    [[ -n "$REPO_ROOT" ]] && command -v git &>/dev/null \
+      && git -C "$REPO_ROOT" pull origin main &>/dev/null || true
   fi
 
+  [[ "$ok" == "false" ]] && return 1
+
+  # Update orchestrator prompts
   for f in CLAUDE.md KIMI.md MODEL-SELECTION.md; do
-    if [[ -f "${REPO_ROOT}/${f}" ]]; then
-      cp "${REPO_ROOT}/${f}" "${CONFIG_DIR}/${f}" && echo "  [ok]  ${f} -> ${CONFIG_DIR}/${f}"
+    if curl -sf "${raw_base}/${f}" -o "${CONFIG_DIR}/${f}" 2>/dev/null; then
+      echo "  [ok]  ${f} → ${CONFIG_DIR}/${f}"
     fi
   done
 
   echo ""
-  echo "Update complete."
+  echo "Updated to $latest_version."
   echo ""
 
   if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
@@ -294,14 +303,12 @@ _update() {
     orch_cmd=$(tmux list-panes -t "${ORCH_SESSION}:orchestra" -F "#{pane_current_command}" 2>/dev/null | head -1)
     if [[ "$orch_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
       echo "Orchestrator is running with the OLD CLAUDE.md."
-      echo "Restart it to apply new prompts: Ctrl+C in Ctrl+A 0, then run: dev"
+      echo "Restart: Ctrl+C in Ctrl+A 0, then run: dev"
       echo ""
     fi
     local workers
     workers=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null | grep -v "^orchestra$" | tr '\n' ' ')
     [[ -n "$workers" ]] && echo "Active workers continue unaffected: ${workers}"
-  else
-    echo "Run 'dev' to start with the updated orchestrator."
   fi
 }
 
