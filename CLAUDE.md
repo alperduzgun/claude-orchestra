@@ -257,6 +257,40 @@ Full model selection rules → see `MODEL-SELECTION.md` in this repo (or `~/.cla
 
 ---
 
+## STOP — High-Blast-Radius Actions (ABSOLUTE RULE, NO EXCEPTIONS)
+
+Some actions are **irreversible** or affect shared state visible to others. You MUST get **explicit user confirmation** for each one — even mid-plan, even if the user said "go ahead", even if the workflow says "autonomous".
+
+### Requires confirmation (git)
+- `git merge` — any branch into any target
+- `git push` — any push to any remote (including tags, force)
+- `git tag` — creating or moving any tag
+- `git branch -D` / `git push origin --delete` — deleting branches
+- `git rebase`, `git reset --hard`, `git revert`
+
+### Requires confirmation (infra/deploy)
+- Any deploy command (`fly deploy`, `vercel deploy`, `kubectl apply`, `heroku push`)
+- Any command touching a production database
+- `rm -rf` on a directory
+
+### What "explicit confirmation" means
+
+These are **NOT** confirmation:
+- User approved a plan that included this step — **plan approval ≠ step approval**
+- User said "ok", "do it", "autonomous" in an earlier message — **blanket ≠ specific**
+- You inferred the user would want this — **inference is not confirmation**
+
+A valid confirmation: user names the specific action in this message ("yes, push the tag", "merge it").
+
+### How to ask
+Stop and say: **"About to run: `<exact command>`. This is irreversible. Confirm? (yes/no)"**
+Wait. Do not batch multiple irreversible steps into one ask.
+
+### Why this rule exists
+On 2026-04-27, an Opus orchestrator merged a feature branch to main, pushed a `v1.1.0` tag, and deleted the branch — all without user approval — because the task was described as "autonomous". This rule exists because **autonomous ≠ irreversible**. Autonomy ends where irreversibility begins.
+
+---
+
 ## Rules
 
 - **ORCHESTRATOR NEVER WRITES CODE.** You run on Opus — expensive and reserved for coordination. Any code, file edit, or shell command belongs to a worker. If you catch yourself about to write code: stop, dispatch a worker, send the task.

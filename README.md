@@ -18,31 +18,54 @@
 
 ## Quick Start (for AI Assistants)
 
-Copy-paste this into Claude Code, ChatGPT, or any AI coding assistant to set up Claude Orchestra automatically:
+Two prompts below — one for **fresh install**, one for **update**. Copy-paste into Claude Code, ChatGPT, Cursor, or any AI assistant.
+
+### Install prompt
 
 ```
-Clone and install Claude Orchestra — a tmux-based multi-session manager for Claude Code.
+Install Claude Orchestra — a tmux-based multi-agent AI orchestrator for Claude Code and Kimi CLI.
 
 Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code) OR Kimi CLI (https://github.com/moonshot-ai/kimi-cli)
 Recommended: Ghostty terminal (https://ghostty.org/) for auto-restore and Cmd+number window switching
 
 Steps:
-1. Install prerequisites if missing:
+1. Install missing prerequisites:
    - macOS: brew install tmux zsh && brew install --cask ghostty
-   - Linux: apt install tmux zsh (Ghostty: https://ghostty.org/download)
+   - Linux: apt install tmux zsh  (Ghostty: https://ghostty.org/download)
 2. git clone https://github.com/alperduzgun/claude-orchestra.git ~/claude-orchestra
 3. cd ~/claude-orchestra && chmod +x install.sh && ./install.sh
-4. The installer installs scripts to ~/.local/bin/ and copies config to ~/.config/orchestra/
-   It will ask about these optional features — say yes to all for the full experience:
-   - Ghostty auto-restore (reattach to orchestra session on terminal launch)
+4. The installer will ask about optional features — say yes to all for the full experience:
+   - Ghostty auto-restore (every tab/window auto-attaches to orchestra session)
    - Ghostty Cmd+number keybindings (Cmd+0 for orchestrator, Cmd+1-9 for workers)
-   - tmux config (Catppuccin theme, Ctrl+A prefix, status bar with worker indicators, vim navigation)
-5. If ~/.local/bin is not in PATH, add to shell profile: export PATH="$HOME/.local/bin:$PATH"
-6. Add my projects with `dev add <alias> <path>` for each project I want to manage
-7. Run `dev` to start the Claude orchestrator, or `dev kimi` to start the Kimi orchestrator
-8. Read ~/claude-orchestra/README.md and verify nothing was missed — check PATH, Ghostty config, tmux config, and all optional features are properly set up.
+   - tmux config (Catppuccin theme, Ctrl+A prefix, status bar, vim navigation)
+5. If ~/.local/bin is not in PATH: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+6. Add projects: dev add <alias> <path>  (repeat for each project)
+7. Start: dev  (Claude orchestrator) or  dev kimi  (Kimi orchestrator)
+8. Verify: run dev status and dev list — confirm projects are registered and session is running.
 
-Refer to the README for the full command reference.
+If anything doesn't work, read ~/claude-orchestra/TROUBLESHOOTING.md
+```
+
+### Update prompt
+
+```
+Update Claude Orchestra to the latest version.
+
+Steps:
+1. Run: dev update
+   - Shows what's new (changelog)
+   - Shows which files will be updated vs preserved
+   - Asks for confirmation before proceeding
+   - Preserves: projects.conf, Ghostty config, tmux config
+   - Updates: dev script, CLAUDE.md, KIMI.md, MODEL-SELECTION.md
+
+2. If dev update can't find the repo (installed as copy, not symlink):
+   echo 'ORCHESTRA_REPO="~/claude-orchestra"' >> ~/.config/orchestra/orchestra.conf
+   dev update
+
+3. If the orchestrator is running, restart it after update:
+   Ctrl+C in the orchestra window (Ctrl+A 0), then run: dev
+   (Worker sessions continue unaffected — no need to restart them)
 ```
 
 ---
@@ -114,6 +137,10 @@ The installer will:
 4. **Ask** if you want Ghostty auto-restore (adds `command` to Ghostty config — works for all tabs/windows)
 5. **Ask** if you want Ghostty Cmd+number keybindings (switch windows with Cmd+0, Cmd+1...)
 6. **Ask** if you want orchestra tmux config (Catppuccin theme, Ctrl+A prefix, worker status bar, vim navigation, window-size fix — backs up existing config)
+
+To update orchestra later: `dev update`
+
+Having issues? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Setup
 
