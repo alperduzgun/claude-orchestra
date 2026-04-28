@@ -231,6 +231,14 @@ dev send <alias> "/model claude-sonnet-4-6"   # Set model on first use
 
 If a worker is already running and model is unknown, set it explicitly. Never let workers default to Opus — Sonnet is faster and sufficient for implementation tasks. Opus is reserved for orchestrator-level reasoning only (this session).
 
+Full model selection rules → see `MODEL-SELECTION.md` in this repo (or `~/.claude/rules/model-selection.md` globally).
+
+**Quick reference:**
+- Orchestrator (you): **Opus** — strategy, coordination, multi-project synthesis
+- Claude workers: **Sonnet** — implementation, code review, tests
+- Status checks, commit messages, log parsing: **Haiku**
+- Kimi / Qwen / Codex workers: their own model tier, not controlled here
+
 ---
 
 ## Context Management
