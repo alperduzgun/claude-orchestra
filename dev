@@ -533,7 +533,7 @@ _worker_launch_cmd() {
   case "$ai" in
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
     codex)  echo "'$CODEX_BIN'" ;;  # no prompt arg; CODEX.md in working dir is read automatically
-    kimi)   echo "'$KIMI_BIN' --prompt \"$prompt\"" ;;  # --prompt = system context (verified)
+    kimi)   echo "'$KIMI_BIN' --agent-file '$ORCH_DIR/kimi-worker-agent.yaml'" ;;  # agent spec sets system context via KIMI.md
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
     *)      return 1 ;;
@@ -543,7 +543,7 @@ _worker_launch_cmd() {
 
 _ensure_orchestrator_prompt_files() {
   mkdir -p "$ORCH_DIR" || return 1
-  local files=(AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md)
+  local files=(AGENTS.md CLAUDE.md KIMI.md CODEX.md ORCHESTRATOR.md MODEL-SELECTION.md TROUBLESHOOTING.md kimi-orchestrator-agent.yaml kimi-worker-agent.yaml)
   local repo_root
   repo_root=$(_find_repo_root)
   if [[ -n "$repo_root" && -d "$repo_root/orchestrator" ]]; then
@@ -579,7 +579,7 @@ _orchestrator_launch_cmd() {
   local prompt="$(_orchestrator_start_prompt "$ai")"
   case "$ai" in
     codex) echo "cd '$ORCH_DIR' && '$CODEX_BIN'" ;;  # no prompt arg; ORCH_DIR/CODEX.md auto-read
-    kimi)  echo "cd '$ORCH_DIR' && '$KIMI_BIN' --prompt \"$prompt\"" ;;  # --prompt = system context (verified)
+    kimi)  echo "cd '$ORCH_DIR' && '$KIMI_BIN' --agent-file '$ORCH_DIR/kimi-orchestrator-agent.yaml'" ;;  # agent spec sets system context via KIMI.md
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; cd '$ORCH_DIR' && '$CLAUDE_BIN' --dangerously-skip-permissions \"$prompt\"" ;;
     *) return 1 ;;
   esac
