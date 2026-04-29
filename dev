@@ -299,6 +299,17 @@ _update() {
 
   [[ "$ok" == "false" ]] && return 1
 
+  # Re-link orchestra-status helper (worker idle/busy indicators)
+  if [[ "$dev_mode" == "symlink" ]] && [[ -n "$REPO_ROOT" ]] && [[ -f "${REPO_ROOT}/orchestra-status.sh" ]]; then
+    chmod +x "${REPO_ROOT}/orchestra-status.sh"
+    if [[ ! -L "${HOME}/.local/bin/orchestra-status" ]] || \
+       [[ "$(readlink "${HOME}/.local/bin/orchestra-status")" != "${REPO_ROOT}/orchestra-status.sh" ]]; then
+      rm -f "${HOME}/.local/bin/orchestra-status"
+      ln -s "${REPO_ROOT}/orchestra-status.sh" "${HOME}/.local/bin/orchestra-status" \
+        && echo "  [ok]  orchestra-status → ${HOME}/.local/bin/orchestra-status"
+    fi
+  fi
+
   mkdir -p "${CONFIG_DIR}" "${ORCH_DIR}"
 
   local prompt_source_root=""

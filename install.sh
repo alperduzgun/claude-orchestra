@@ -6,6 +6,7 @@ set -e
 INSTALL_DIR="${HOME}/.local/bin"
 CONFIG_DIR="${HOME}/.config/orchestra"
 GHOSTTY_CONFIG="${HOME}/.config/ghostty/config"
+TMUX_CONFIG="${HOME}/.tmux.conf"
 ORCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Claude Orchestra installer"
@@ -66,6 +67,16 @@ if [[ -L "${INSTALL_DIR}/dev" || -f "${INSTALL_DIR}/dev" ]]; then
 fi
 ln -s "${ORCH_DIR}/dev" "${INSTALL_DIR}/dev"
 echo "Installed: ${INSTALL_DIR}/dev -> ${ORCH_DIR}/dev"
+
+# ── Install orchestra-status helper (worker idle/busy indicators) ─
+if [[ -f "${ORCH_DIR}/orchestra-status.sh" ]]; then
+  if [[ -L "${INSTALL_DIR}/orchestra-status" || -f "${INSTALL_DIR}/orchestra-status" ]]; then
+    rm -f "${INSTALL_DIR}/orchestra-status"
+  fi
+  ln -s "${ORCH_DIR}/orchestra-status.sh" "${INSTALL_DIR}/orchestra-status"
+  chmod +x "${ORCH_DIR}/orchestra-status.sh"
+  echo "Installed: ${INSTALL_DIR}/orchestra-status -> ${ORCH_DIR}/orchestra-status.sh"
+fi
 
 # Store repo path so 'dev update' can find it later
 orch_conf="${CONFIG_DIR}/orchestra.conf"
@@ -136,6 +147,49 @@ elif command -v ghostty &>/dev/null || [[ -d "/Applications/Ghostty.app" ]]; the
     echo "Ghostty: auto-restore enabled (created $GHOSTTY_CONFIG)"
   else
     echo "Ghostty: skipped (add manually: command = ${INSTALL_DIR}/orchestra-attach)"
+  fi
+fi
+
+# ── Optional: Ghostty Cmd+0-9 keybindings ──────────────────────
+if [[ -f "${ORCH_DIR}/ghostty.example.conf" ]] && (command -v ghostty &>/dev/null || [[ -d "/Applications/Ghostty.app" ]]); then
+  if [[ -f "$GHOSTTY_CONFIG" ]] && grep -q "super+zero=text" "$GHOSTTY_CONFIG" 2>/dev/null; then
+    echo "Ghostty: Cmd+0-9 keybindings already configured (skipping)"
+  else
+    read -p "Enable Ghostty Cmd+0-9 keybindings (switch tmux windows)? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      mkdir -p "$(dirname "$GHOSTTY_CONFIG")"
+      echo "" >> "$GHOSTTY_CONFIG"
+      echo "# Claude Orchestra: Cmd+0-9 → tmux window switching (requires Ctrl+A prefix)" >> "$GHOSTTY_CONFIG"
+      grep -E "^keybind" "${ORCH_DIR}/ghostty.example.conf" >> "$GHOSTTY_CONFIG"
+      echo "Ghostty: Cmd+0-9 keybindings enabled"
+    else
+      echo "Ghostty: keybindings skipped (see ghostty.example.conf to add manually)"
+    fi
+  fi
+fi
+
+# ── Optional: tmux config (Ctrl+A prefix, tab-style status, mouse) ─
+if [[ -f "${ORCH_DIR}/tmux.example.conf" ]]; then
+  if [[ -f "$TMUX_CONFIG" ]] && grep -q "Claude Orchestra" "$TMUX_CONFIG" 2>/dev/null; then
+    echo "tmux: orchestra config already present (skipping)"
+  else
+    read -p "Install orchestra tmux config (Ctrl+A prefix, tab-style status, mouse)? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      if [[ -f "$TMUX_CONFIG" ]]; then
+        cp "$TMUX_CONFIG" "${TMUX_CONFIG}.bak.$(date +%s)"
+        echo "tmux: backed up existing ~/.tmux.conf"
+        echo "" >> "$TMUX_CONFIG"
+        echo "# ── Claude Orchestra config (appended by install.sh) ──" >> "$TMUX_CONFIG"
+        cat "${ORCH_DIR}/tmux.example.conf" >> "$TMUX_CONFIG"
+      else
+        cp "${ORCH_DIR}/tmux.example.conf" "$TMUX_CONFIG"
+      fi
+      tmux source-file "$TMUX_CONFIG" 2>/dev/null && echo "tmux: config installed and reloaded" || echo "tmux: config installed (reload with: tmux source-file ~/.tmux.conf)"
+    else
+      echo "tmux: skipped (see tmux.example.conf to add manually)"
+    fi
   fi
 fi
 
