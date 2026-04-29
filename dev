@@ -12,7 +12,7 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
-ORCHESTRA_VERSION="v1.3.2"
+ORCHESTRA_VERSION="v1.4.1"
 ORCHESTRA_REPO_URL="https://github.com/alperduzgun/claude-orchestra"
 
 # Config
@@ -269,7 +269,7 @@ _update() {
   [[ -f "${HOME}/.tmux.conf" ]] && echo "  ~/.tmux.conf"
   echo ""
 
-  read -p "Proceed? (y/N) " -n 1 -r; echo ""
+  read -k 1 "REPLY?Proceed? (y/N) "; echo ""
   [[ ! "$REPLY" =~ ^[Yy]$ ]] && { echo "Cancelled."; return 0; }
 
   echo ""
