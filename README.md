@@ -237,6 +237,7 @@ Environment variables (set in your shell profile):
 | `MAX_AI_SESSIONS` | `3` | Max concurrent AI sessions across Claude, Kimi, and Codex workers |
 | `CLAUDE_BIN` | auto-detected | Path to Claude Code binary |
 | `KIMI_BIN` | auto-detected | Path to Kimi CLI binary |
+| `ORCHESTRA_NOTIFY` | `1` | Set to `0`/`false`/`no`/`off` to silence desktop notifications fired by `dev wait`, `dev ask`, `dev run`, and `dev recover` |
 
 > **Note:** `ORCHESTRA_DIR` and `ORCHESTRA_CONFIG_DIR` now default to different paths. `ORCHESTRA_DIR` controls where the orchestrator AI runs and reads its dedicated prompt files. `ORCHESTRA_CONFIG_DIR` controls where the project registry, worker-safe root instructions, and shared config files live.
 
