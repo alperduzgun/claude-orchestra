@@ -12,7 +12,7 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
-ORCHESTRA_VERSION="v1.4.1"
+ORCHESTRA_VERSION="v1.4.2"
 ORCHESTRA_REPO_URL="https://github.com/alperduzgun/claude-orchestra"
 
 # Config
@@ -74,7 +74,11 @@ _log_history() {
 }
 
 # Desktop notification helper (macOS + Linux)
+# Silenced when ORCHESTRA_NOTIFY ∈ {0, false, no, off} (case-insensitive)
 _notify() {
+  case "${ORCHESTRA_NOTIFY:-1}" in
+    0|false|False|FALSE|no|No|NO|off|Off|OFF) return 0 ;;
+  esac
   local title="${1:-Orchestra}"
   local msg="${2:-Task complete}"
   if command -v osascript &>/dev/null; then
