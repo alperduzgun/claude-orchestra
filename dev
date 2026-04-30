@@ -12,7 +12,7 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
-ORCHESTRA_VERSION="v1.3.2"
+ORCHESTRA_VERSION="v1.4.2"
 ORCHESTRA_REPO_URL="https://github.com/alperduzgun/claude-orchestra"
 
 # Config
@@ -86,7 +86,11 @@ _log_history() {
 }
 
 # Desktop notification helper (macOS + Linux)
+# Silenced when ORCHESTRA_NOTIFY ∈ {0, false, no, off} (case-insensitive)
 _notify() {
+  case "${ORCHESTRA_NOTIFY:-1}" in
+    0|false|False|FALSE|no|No|NO|off|Off|OFF) return 0 ;;
+  esac
   local title="${1:-Orchestra}"
   local msg="${2:-Task complete}"
   if command -v osascript &>/dev/null; then
@@ -281,7 +285,7 @@ _update() {
   [[ -f "${HOME}/.tmux.conf" ]] && echo "  ~/.tmux.conf"
   echo ""
 
-  read -p "Proceed? (y/N) " -n 1 -r; echo ""
+  read -k 1 "REPLY?Proceed? (y/N) "; echo ""
   [[ ! "$REPLY" =~ ^[Yy]$ ]] && { echo "Cancelled."; return 0; }
 
   echo ""
@@ -310,6 +314,17 @@ _update() {
   fi
 
   [[ "$ok" == "false" ]] && return 1
+
+  # Re-link orchestra-status helper (worker idle/busy indicators)
+  if [[ "$dev_mode" == "symlink" ]] && [[ -n "$REPO_ROOT" ]] && [[ -f "${REPO_ROOT}/orchestra-status.sh" ]]; then
+    chmod +x "${REPO_ROOT}/orchestra-status.sh"
+    if [[ ! -L "${HOME}/.local/bin/orchestra-status" ]] || \
+       [[ "$(readlink "${HOME}/.local/bin/orchestra-status")" != "${REPO_ROOT}/orchestra-status.sh" ]]; then
+      rm -f "${HOME}/.local/bin/orchestra-status"
+      ln -s "${REPO_ROOT}/orchestra-status.sh" "${HOME}/.local/bin/orchestra-status" \
+        && echo "  [ok]  orchestra-status → ${HOME}/.local/bin/orchestra-status"
+    fi
+  fi
 
   mkdir -p "${CONFIG_DIR}" "${ORCH_DIR}"
 
