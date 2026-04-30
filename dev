@@ -12,7 +12,7 @@ if ! command -v tmux &>/dev/null; then
   exit 1
 fi
 
-ORCHESTRA_VERSION="v1.4.2"
+ORCHESTRA_VERSION="v1.4.3"
 ORCHESTRA_REPO_URL="https://github.com/alperduzgun/claude-orchestra"
 
 # Config
