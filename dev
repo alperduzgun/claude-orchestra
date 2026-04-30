@@ -540,7 +540,7 @@ _worker_launch_cmd() {
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
     codex)  echo "'$CODEX_BIN' \"$prompt\"" ;;
     kimi)   echo "'$KIMI_BIN'" ;;
-    forge)  echo "'$FORGE_BIN' \"$prompt\"" ;;
+    forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "gemini" ;;
     *)      return 1 ;;
@@ -584,6 +584,22 @@ _send_worker_bootstrap_if_needed() {
       tmux send-keys -t "$target" -l "$prompt"
       tmux send-keys -t "$target" Enter
       ;;
+    forge)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
   esac
 }
 
@@ -599,6 +615,22 @@ _send_orchestrator_bootstrap_if_needed() {
         local pane_cmd
         pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
         if [[ "$pane_cmd" =~ ^[Pp]ython ]] || [[ "$pane_cmd" == "kimi" ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+    forge)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
           break
         fi
         sleep 1
@@ -642,7 +674,7 @@ _orchestrator_launch_cmd() {
   case "$ai" in
     codex) echo "cd '$ORCH_DIR' && '$CODEX_BIN' \"$prompt\"" ;;
     kimi)  echo "cd '$ORCH_DIR' && '$KIMI_BIN'" ;;
-    forge) echo "cd '$ORCH_DIR' && '$FORGE_BIN' \"$prompt\"" ;;
+    forge) echo "cd '$ORCH_DIR' && '$FORGE_BIN'" ;;
     claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; cd '$ORCH_DIR' && '$CLAUDE_BIN' --dangerously-skip-permissions \"$prompt\"" ;;
     *) return 1 ;;
   esac
@@ -1277,6 +1309,7 @@ _start_forge() {
     mkdir -p "$LOG_DIR"
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     tmux send-keys -t "$ORCH_SESSION:$name" "cd '$dir' && $(_worker_launch_cmd forge)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "forge"
     echo "Launched Forge in existing window: $name"
   else
     local claude_active=$(_claude_count)
@@ -1295,6 +1328,7 @@ _start_forge() {
     tmux pipe-pane -t "$ORCH_SESSION:$name" -o "cat >> '$LOG_DIR/${name}.log'"
     sleep 0.5
     tmux send-keys -t "$ORCH_SESSION:$name" "$(_worker_launch_cmd forge)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$name" "forge"
     echo "Started: $name [forge] -> ${dir/$HOME/~}"
   fi
 
@@ -1762,6 +1796,7 @@ _recover() {
           elif [[ "$tracked_ai" == "forge" ]]; then
             echo "Recovering $wname [forge]..."
             tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd forge)" Enter
+            _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "forge"
             forge_recovered=$((forge_recovered + 1))
             _log_history "RECOVER-FORGE $wname"
           elif [[ "$tracked_ai" == "kimi" ]] || [[ -z "$tracked_ai" && -x "$KIMI_BIN" ]]; then
@@ -1866,6 +1901,7 @@ _recover() {
   elif [[ "$tracked_ai" == "forge" ]]; then
     echo "Recovering $target [forge]..."
     tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd forge)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$target" "forge"
     _log_history "RECOVER-FORGE $target"
 
     local max_wait=15
@@ -1959,6 +1995,7 @@ _orchestra() {
       echo "Starting Codex orchestrator..."
     elif [[ "$orch_ai" == "forge" ]]; then
       tmux send-keys -t "$ORCH_SESSION:orchestra" "$(_orchestrator_launch_cmd forge)" Enter
+      _send_orchestrator_bootstrap_if_needed "$ORCH_SESSION:orchestra" "forge"
       echo "Starting Forge orchestrator..."
     else
       tmux send-keys -t "$ORCH_SESSION:orchestra" "$(_orchestrator_launch_cmd claude)" Enter
