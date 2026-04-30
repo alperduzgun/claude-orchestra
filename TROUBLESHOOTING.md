@@ -9,6 +9,7 @@ Jump to your symptom:
 - [`dev start` says "Claude may not be ready"](#claude-may-not-be-ready)
 - [Worker not responding to `dev send`](#worker-not-responding)
 - [`Cmd+number` keybindings not working](#cmdnumber-not-working)
+- [Forge not found / `forge: command not found`](#forge-not-found)
 - [Still stuck?](#still-stuck)
 
 ---
@@ -192,6 +193,49 @@ Workers should always use Sonnet. Opus is for the orchestrator only.
 ```bash
 dev peek myapp 200   # try more lines
 tail -100 ~/.local/share/orchestra/logs/myapp.log   # raw log
+```
+
+---
+
+## Forge not found
+
+**Symptom:**
+```
+ERROR: Forge binary not found or not executable: /Users/.../.local/bin/forge
+```
+
+**Cause:** Forge Code is not installed or not in PATH.
+
+**Install Forge Code:**
+```bash
+# Option 1: Install via cargo (Rust toolchain required)
+cargo install forgecode
+
+# Option 2: Download prebuilt binary from GitHub releases
+# https://github.com/tailcallhq/forgecode/releases
+
+# Option 3: Build from source
+git clone https://github.com/tailcallhq/forgecode.git
+cd forgecode
+cargo build --release
+cp target/release/forge ~/.local/bin/
+```
+
+**Verify:**
+```bash
+which forge        # should return a path
+forge --version    # should print version
+```
+
+**If installed in a non-standard location:**
+```bash
+export FORGE_BIN="/path/to/forge"
+```
+
+**Set default provider/model:**
+```bash
+forge config set session.provider_id minimax
+forge config set session.model_id MiniMax-M2.7
 ```
 
 ---
