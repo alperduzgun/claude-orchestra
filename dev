@@ -23,6 +23,7 @@ KIMI_BIN="${KIMI_BIN:-$(command -v kimi 2>/dev/null || echo "$HOME/.local/bin/ki
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
 FORGE_BIN="${FORGE_BIN:-$(command -v forge 2>/dev/null || echo "$HOME/.local/bin/forge")}"
 OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "$HOME/.local/bin/opencode")}"
+GEMINI_BIN="${GEMINI_BIN:-$(command -v gemini 2>/dev/null || echo "$HOME/.local/bin/gemini")}"
 
 # AI window tracking file (stores which AI is running in each window)
 AI_TRACK_FILE="$CONFIG_DIR/.ai_windows"
@@ -71,6 +72,15 @@ _require_opencode() {
     return 1
   fi
 }
+
+# Validate GEMINI_BIN
+_require_gemini() {
+  if [[ ! -x "$GEMINI_BIN" ]]; then
+    echo "ERROR: gemini binary not found or not executable: $GEMINI_BIN"
+    echo "Install Gemini CLI: https://ai.google.dev/gemini-cli/docs"
+    return 1
+  fi
+}
 ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
 # ORCH_DIR: dedicated orchestrator prompt directory
 # Override with ORCHESTRA_DIR env var or set in ~/.config/orchestra/orchestra.conf
@@ -88,6 +98,10 @@ CODEX_PROC_PATTERN="^node$"
 FORGE_PROC_PATTERN="^forge$"
 # opencode is a native binary
 OPENCODE_PROC_PATTERN="^opencode$"
+# Gemini CLI is a Node.js app (runs as 'node' with gemini arg)
+GEMINI_PROC_PATTERN="gemini"
+# But we need to distinguish from codex - check the full command
+GEMINI_FULL_PROC_PATTERN="node.*gemini"
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
 HISTORY_FILE="${HOME}/.local/share/orchestra/history.log"
 
@@ -484,6 +498,8 @@ _detect_ai_type() {
     echo "forge"
   elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
     echo "opencode"
+  elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+    echo "gemini"
   else
     echo ""
   fi
@@ -498,6 +514,7 @@ _is_ai_running() {
   if [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then return 0; fi
   if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then return 0; fi
   if [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then return 0; fi
+  if [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then return 0; fi
   return 1
 }
 
@@ -509,6 +526,7 @@ _get_ai_bin() {
     codex) echo "$CODEX_BIN" ;;
     forge) echo "$FORGE_BIN" ;;
     opencode) echo "$OPENCODE_BIN" ;;
+    gemini) echo "$GEMINI_BIN" ;;
     *) echo "" ;;
   esac
 }
@@ -523,7 +541,7 @@ _ai_launch_cmd() {
     codex)  echo "'$CODEX_BIN'" ;;
     forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
-    gemini) echo "gemini" ;;
+    gemini) echo "'$GEMINI_BIN' --skip-trust" ;;
     opencode) echo "'$OPENCODE_BIN'" ;;
     *)      return 1 ;;
   esac
@@ -538,7 +556,7 @@ _ai_require() {
     codex)  command -v codex  >/dev/null || { echo "ERROR: codex not found in PATH"; return 1; } ;;
     forge)  command -v forge  >/dev/null || { echo "ERROR: forge not found in PATH"; return 1; } ;;
     qwen)   command -v qwen   >/dev/null || { echo "ERROR: qwen not found in PATH"; return 1; } ;;
-    gemini) command -v gemini >/dev/null || { echo "ERROR: gemini not found in PATH"; return 1; } ;;
+    gemini) _require_gemini ;;
     opencode) _require_opencode ;;
     *)      echo "ERROR: unknown AI type: $ai (supported: claude, codex, kimi, forge, qwen, gemini, opencode)"; return 1 ;;
   esac
@@ -552,6 +570,7 @@ _orchestrator_required_reading() {
     kimi)   echo "AGENTS.md, KIMI.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
     forge)  echo "AGENTS.md, FORGE.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
     opencode) echo "AGENTS.md, OPENCODE.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    gemini) echo "AGENTS.md, GEMINI.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
     *) return 1 ;;
   esac
 }
@@ -576,8 +595,8 @@ _worker_launch_cmd() {
     kimi)   echo "'$KIMI_BIN'" ;;
     forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
-    gemini) echo "gemini" ;;
-    opencode) echo "'$OPENCODE_BIN'" ;;
+    gemini) echo "'$GEMINI_BIN' -p '$prompt'" ;;
+    opencode) echo "'$OPENCODE_BIN' --prompt '$prompt'" ;;
     *)      return 1 ;;
   esac
 }
@@ -626,6 +645,38 @@ _send_worker_bootstrap_if_needed() {
         local pane_cmd
         pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
         if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+    opencode)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+    gemini)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
           break
         fi
         sleep 1
@@ -762,7 +813,7 @@ _detect_pane_ai() {
   elif [[ "$pcmd" == "codex" ]]; then echo "codex"
   elif [[ "$pcmd" == "forge" ]]; then echo "forge"
   elif [[ "$pcmd" == "qwen" ]]; then echo "qwen"
-  elif [[ "$pcmd" == "gemini" ]]; then echo "gemini"
+  elif [[ "$pcmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pcmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then echo "gemini"
   elif [[ "$pcmd" == "opencode" ]]; then echo "opencode"
   else echo "$pcmd"
   fi
@@ -784,6 +835,7 @@ _is_done() {
   [[ "$pane_cmd" == "kimi" ]] && is_ai=true
   [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]] && is_ai=true
   [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]] && is_ai=true
+  [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]] && is_ai=true
   [[ "$is_ai" == false ]] && return 2
 
   # NOTE: Forge state detection is best-effort. Forge TUI idle/active
@@ -915,6 +967,8 @@ _list() {
         sess_state="[forge]"
       elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
         sess_state="[opencode]"
+      elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+        sess_state="[gemini]"
       else
         sess_state="[shell]"
       fi
@@ -1399,7 +1453,7 @@ _send() {
 
   # Parse: dev send <project> [--qwen|--right|--left|--opencode] <message>
   for arg in "$@"; do
-    if [[ "$arg" == "--qwen" || "$arg" == "--right" || "$arg" == "--opencode" ]]; then
+    if [[ "$arg" == "--qwen" || "$arg" == "--right" || "$arg" == "--opencode" || "$arg" == "--gemini" ]]; then
       target="right"
     elif [[ "$arg" == "--left" ]]; then
       target="left"
@@ -1494,6 +1548,8 @@ _status() {
         sess_state="forge"
       elif [[ "$pcmd" =~ $OPENCODE_PROC_PATTERN ]]; then
         sess_state="opencode"
+      elif [[ "$pcmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pcmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+        sess_state="gemini"
       fi
       printf "  %-4s %-18s %-12s %s\n" "$idx" "$wname" "[$sess_state]" "${dir/$HOME/~}"
     done <<< "$windows"
@@ -1522,6 +1578,7 @@ _broadcast() {
   local codex_count=0
   local forge_count=0
   local opencode_count=0
+  local gemini_count=0
   local skipped=0
   if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
     local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
@@ -1544,6 +1601,9 @@ _broadcast() {
       elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
         is_ai=true
         opencode_count=$((opencode_count + 1))
+      elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+        is_ai=true
+        gemini_count=$((gemini_count + 1))
       fi
       
       if [[ "$is_ai" == true ]]; then
@@ -1554,8 +1614,8 @@ _broadcast() {
       fi
     done <<< "$windows"
   fi
-  local total=$((claude_count + kimi_count + codex_count + forge_count + opencode_count))
-  echo "Broadcast to $total AI sessions (Claude: $claude_count, Kimi: $kimi_count, Codex: $codex_count, Forge: $forge_count, opencode: $opencode_count, skipped: $skipped)."
+  local total=$((claude_count + kimi_count + codex_count + forge_count + opencode_count + gemini_count))
+  echo "Broadcast to $total AI sessions (Claude: $claude_count, Kimi: $kimi_count, Codex: $codex_count, Forge: $forge_count, opencode: $opencode_count, gemini: $gemini_count, skipped: $skipped)."
 }
 
 # Peek at a worker's recent output
@@ -1567,7 +1627,7 @@ _peek() {
   local raw=false
 
   for arg in "$@"; do
-    if [[ "$arg" == "--qwen" || "$arg" == "--right" || "$arg" == "--opencode" ]]; then
+    if [[ "$arg" == "--qwen" || "$arg" == "--right" || "$arg" == "--opencode" || "$arg" == "--gemini" ]]; then
       target="right"
     elif [[ "$arg" == "--left" ]]; then
       target="left"
@@ -2016,6 +2076,8 @@ _orchestra() {
     current_ai="forge"
   elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
     current_ai="opencode"
+  elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+    current_ai="gemini"
   fi
 
   # If a different AI is running, kill it first
