@@ -541,7 +541,7 @@ _ai_launch_cmd() {
     codex)  echo "'$CODEX_BIN'" ;;
     forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
-    gemini) echo "'$GEMINI_BIN' --skip-trust" ;;
+    gemini) echo "'$GEMINI_BIN' --approval-mode yolo" ;;
     opencode) echo "'$OPENCODE_BIN'" ;;
     *)      return 1 ;;
   esac
@@ -595,7 +595,7 @@ _worker_launch_cmd() {
     kimi)   echo "'$KIMI_BIN'" ;;
     forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
-    gemini) echo "'$GEMINI_BIN' -p '$prompt'" ;;
+    gemini) echo "'$GEMINI_BIN'" ;;
     opencode) echo "'$OPENCODE_BIN' --prompt '$prompt'" ;;
     *)      return 1 ;;
   esac
