@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Manage multiple Claude Code, Kimi CLI, and Forge Code sessions from a single terminal.</strong><br>
+  <strong>Manage multiple Claude Code, Kimi CLI, Forge Code, Gemini CLI, and OpenCode sessions from a single terminal.</strong><br>
   One orchestrator AI controls worker AI sessions across your projects via tmux.
 </p>
 
@@ -23,9 +23,9 @@ Two prompts below — one for **fresh install**, one for **update**. Copy-paste 
 ### Install prompt
 
 ```
-Install Claude Orchestra — a tmux-based multi-agent AI orchestrator for Claude Code, Kimi CLI, and Forge Code.
+Install Claude Orchestra — a tmux-based multi-agent AI orchestrator for Claude Code, Kimi CLI, Forge Code, Gemini CLI, and OpenCode.
 
-Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code) OR Kimi CLI (https://github.com/moonshot-ai/kimi-cli) OR Forge Code (https://github.com/tailcallhq/forgecode)
+Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code) OR Kimi CLI (https://github.com/moonshot-ai/kimi-cli) OR Forge Code (https://github.com/tailcallhq/forgecode) OR Gemini CLI (https://ai.google.dev/gemini-cli/docs) OR OpenCode
 Recommended: Ghostty terminal (https://ghostty.org/) for auto-restore and Cmd+number window switching
 
 Steps:
