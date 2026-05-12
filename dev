@@ -1881,18 +1881,26 @@ _recover() {
     local kimi_recovered=0
     local codex_recovered=0
     local forge_recovered=0
+    local opencode_recovered=0
+    local gemini_recovered=0
     if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
       local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_current_command}" 2>/dev/null)
       while IFS='|' read -r wname pcmd; do
         [[ "$wname" == "orchestra" ]] && continue
         [[ -z "${PROJECTS[$wname]}" ]] && continue
-        
-        # Check current AI type and recover accordingly
-        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && [[ ! "$pcmd" =~ $CODEX_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $FORGE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+
+        # Check current AI type and recover accordingly (exclude all AI types to avoid false positives)
+        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && [[ ! "$pcmd" =~ $CODEX_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $FORGE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $OPENCODE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $GEMINI_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
           # Window exists but no AI running - determine which AI was there
           local tracked_ai=$(_get_ai_type "$wname")
           local dir="${PROJECTS[$wname]}"
-          
+
+          # Handle dual mode tracking (format: dual:left:right)
+          if [[ "$tracked_ai" == dual:* ]]; then
+            local left_ai="${tracked_ai#dual:}"
+            left_ai="${left_ai%%:*}"
+          fi
+
           if [[ "$tracked_ai" == "codex" ]]; then
             echo "Recovering $wname [codex]..."
             tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
@@ -1910,6 +1918,18 @@ _recover() {
             _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "kimi"
             kimi_recovered=$((kimi_recovered + 1))
             _log_history "RECOVER-KIMI $wname"
+          elif [[ "$tracked_ai" == "opencode" ]]; then
+            echo "Recovering $wname [opencode]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname" "$(_worker_launch_cmd opencode)" Enter
+            _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "opencode"
+            opencode_recovered=$((opencode_recovered + 1))
+            _log_history "RECOVER-OPENCODE $wname"
+          elif [[ "$tracked_ai" == "gemini" ]]; then
+            echo "Recovering $wname [gemini]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname" "$(_worker_launch_cmd gemini)" Enter
+            _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "gemini"
+            gemini_recovered=$((gemini_recovered + 1))
+            _log_history "RECOVER-GEMINI $wname"
           else
             echo "Recovering $wname [claude]..."
             tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
@@ -1919,7 +1939,7 @@ _recover() {
         fi
       done <<< "$windows"
     fi
-    echo "Recovered $((claude_recovered + kimi_recovered + codex_recovered + forge_recovered)) sessions (Claude: $claude_recovered, Kimi: $kimi_recovered, Codex: $codex_recovered, Forge: $forge_recovered)."
+    echo "Recovered $((claude_recovered + kimi_recovered + codex_recovered + forge_recovered + opencode_recovered + gemini_recovered)) sessions (Claude: $claude_recovered, Kimi: $kimi_recovered, Codex: $codex_recovered, Forge: $forge_recovered, opencode: $opencode_recovered, gemini: $gemini_recovered)."
     return 0
   fi
 
@@ -1957,6 +1977,14 @@ _recover() {
   fi
   if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
     echo "$target: Forge is already running"
+    return 0
+  fi
+  if [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+    echo "$target: OpenCode is already running"
+    return 0
+  fi
+  if [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+    echo "$target: Gemini is already running"
     return 0
   fi
 
@@ -2023,6 +2051,48 @@ _recover() {
     else
       echo "Recovered: $target [forge]"
       _notify "$target" "Forge session recovered"
+    fi
+  elif [[ "$tracked_ai" == "opencode" ]]; then
+    echo "Recovering $target [opencode]..."
+    tmux send-keys -t "$ORCH_SESSION:$target" "$(_worker_launch_cmd opencode)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$target" "opencode"
+    _log_history "RECOVER-OPENCODE $target"
+
+    local max_wait=15
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+      pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]] && break
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    if [[ $waited -ge $max_wait ]]; then
+      echo "WARNING: OpenCode may not be ready in $target"
+    else
+      echo "Recovered: $target [opencode]"
+      _notify "$target" "OpenCode session recovered"
+    fi
+  elif [[ "$tracked_ai" == "gemini" ]]; then
+    echo "Recovering $target [gemini]..."
+    tmux send-keys -t "$ORCH_SESSION:$target" "$(_worker_launch_cmd gemini)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$target" "gemini"
+    _log_history "RECOVER-GEMINI $target"
+
+    local max_wait=15
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+      pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]] && break
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    if [[ $waited -ge $max_wait ]]; then
+      echo "WARNING: Gemini may not be ready in $target"
+    else
+      echo "Recovered: $target [gemini]"
+      _notify "$target" "Gemini session recovered"
     fi
   else
     echo "Recovering $target [claude]..."
