@@ -596,7 +596,7 @@ _worker_launch_cmd() {
     forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "'$GEMINI_BIN'" ;;
-    opencode) echo "'$OPENCODE_BIN'" ;;
+    opencode) echo "OPENCODE_CONFIG_CONTENT='{\"permission\":\"allow\"}' '$OPENCODE_BIN'" ;;
     *)      return 1 ;;
   esac
 }
