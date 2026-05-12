@@ -1496,28 +1496,29 @@ _send() {
   [[ -z "$ai_label" ]] && ai_label="unknown"
   local ai_type="$ai_label"
 
-  # Flatten multi-line messages to single line
-  # (Both AI TUIs collapse pasted multi-line text into "[Pasted text]" and won't send it)
+  # Flatten multi-line messages to single line for AI TUIs
+  # (Most AI TUIs collapse pasted multi-line text into "[Pasted text]" and won't process it)
   msg="${msg//$'\n'/ }"
   msg="${msg//$'\r'/ }"
 
-  if [[ ${#msg} -gt 1000 ]]; then
-    local tmpfile=$(mktemp)
-    printf '%s' "$msg" > "$tmpfile"
-    tmux load-buffer "$tmpfile" && \
-      tmux paste-buffer -t "$pane_target" && \
-      sleep 0.3 && \
-      tmux send-keys -t "$pane_target" Enter || {
-        echo "ERROR: Failed to send long message to $name"
-        rm -f "$tmpfile"
-        return 1
-      }
-    rm -f "$tmpfile"
+  # Use tmux buffer for all messages to avoid send-keys interpretation issues
+  # This ensures line endings and special characters are sent correctly
+  local tmpfile=$(mktemp)
+  printf '%s' "$msg" > "$tmpfile"
+  if tmux load-buffer "$tmpfile" 2>/dev/null; then
+    tmux paste-buffer -t "$pane_target" 2>/dev/null || {
+      # Fallback to send-keys if buffer fails
+      tmux send-keys -l -t "$pane_target" "$msg"
+    }
+    sleep 0.3
+    tmux send-keys -t "$pane_target" Enter
   else
+    # Ultimate fallback
     tmux send-keys -l -t "$pane_target" "$msg"
     sleep 0.2
     tmux send-keys -t "$pane_target" Enter
   fi
+  rm -f "$tmpfile"
 
   _log_history "SEND $name [$ai_label]: ${msg:0:200}"
   local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
