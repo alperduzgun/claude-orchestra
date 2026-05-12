@@ -596,7 +596,7 @@ _worker_launch_cmd() {
     forge)  echo "'$FORGE_BIN'" ;;
     qwen)   echo "qwen" ;;
     gemini) echo "'$GEMINI_BIN'" ;;
-    opencode) echo "'$OPENCODE_BIN' --prompt '$prompt'" ;;
+    opencode) echo "'$OPENCODE_BIN' --prompt '$prompt' --dangerously-skip-permissions" ;;
     *)      return 1 ;;
   esac
 }
@@ -666,9 +666,6 @@ _send_worker_bootstrap_if_needed() {
         sleep 1
         waited=$((waited + 1))
       done
-      sleep 1
-      tmux send-keys -t "$target" -l "$prompt"
-      tmux send-keys -t "$target" Enter
       ;;
     gemini)
       local max_wait=15
