@@ -497,22 +497,6 @@ _get_ai_type() {
 }
 
 # AI type patterns (DRY - single source of truth)
-# Strict patterns to minimize false positives
-# Note: pane_current_command shows process name, not full command line
-# For node-based AIs (codex, gemini), we check both name AND full command via pane_start_command
-declare -A AI_PATTERNS=(
-  [claude]="^[0-9]+\.[0-9]+\.[0-9]+$"
-  [kimi]="(^kimi$|python.*kimi)"
-  [codex]="^node$"
-  [forge]="(^forge$|^/.*forge)"
-  [opencode]="(^opencode$|^/.*opencode)"
-  [gemini]="(^gemini$|^/.*gemini)"
-)
-declare -A AI_FULL_PATTERNS=(
-  [codex]="node.*codex"
-  [gemini]="node.*gemini"
-)
-
 # Check if pane command matches AI type using both simple and full patterns
 # Returns 0 (match) or 1 (no match)
 _ai_matches() {
@@ -870,17 +854,18 @@ _clean_terminal_output() {
 _detect_pane_ai() {
   local name="$1"
   local pane_idx="$2"
-  local pcmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_current_command}" 2>/dev/null \
-    | awk -v i="$pane_idx" '$1==i {print $2}')
-  if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then echo "claude"
-  elif [[ "$pcmd" == "kimi" ]] || [[ "$pcmd" =~ ^[Pp]ython ]]; then echo "kimi"
-  elif [[ "$pcmd" == "codex" ]]; then echo "codex"
-  elif [[ "$pcmd" == "forge" ]]; then echo "forge"
-  elif [[ "$pcmd" == "qwen" ]]; then echo "qwen"
-  elif [[ "$pcmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pcmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then echo "gemini"
-  elif [[ "$pcmd" == "opencode" ]]; then echo "opencode"
-  else echo "$pcmd"
-  fi
+  local pane_info=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_current_command} #{pane_start_command}" 2>/dev/null \
+    | awk -v i="$pane_idx" '$1==i {print $2 "|" $3}')
+  local pcmd="${pane_info%%|*}"
+  local pstart="${pane_info##*|}"
+
+  for ai in claude kimi codex forge opencode gemini; do
+    if _ai_matches "$ai" "$pcmd" "$pstart"; then
+      echo "$ai"
+      return 0
+    fi
+  done
+  echo "$pcmd"
 }
 
 # Helper: check if a worker AI is idle (done with task)
@@ -890,16 +875,13 @@ _is_done() {
   local ai_type="${2:-$(_detect_ai_type "$name")}"
   if ! _has_window "$name"; then return 2; fi
 
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  
-  # Check if it's an AI process
+  local pane_cmd=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_current_command}" 2>/dev/null)
+  local pane_start=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_start_command}" 2>/dev/null)
+
   local is_ai=false
-  [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && is_ai=true
-  [[ "$pane_cmd" =~ ^[Pp]ython ]] && is_ai=true
-  [[ "$pane_cmd" == "kimi" ]] && is_ai=true
-  [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]] && is_ai=true
-  [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]] && is_ai=true
-  [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]] && is_ai=true
+  for ai in claude kimi codex forge opencode gemini; do
+    _ai_matches "$ai" "$pane_cmd" "$pane_start" && is_ai=true && break
+  done
   [[ "$is_ai" == false ]] && return 2
 
   # NOTE: Forge state detection is best-effort. Forge TUI idle/active
@@ -1565,24 +1547,22 @@ _send() {
   msg="${msg//$'\n'/ }"
   msg="${msg//$'\r'/ }"
 
-  # Use tmux buffer for all messages to avoid send-keys interpretation issues
-  # This ensures line endings and special characters are sent correctly
-  local tmpfile=$(mktemp)
-  printf '%s' "$msg" > "$tmpfile"
-  if tmux load-buffer "$tmpfile" 2>/dev/null; then
-    tmux paste-buffer -t "$pane_target" 2>/dev/null || {
-      # Fallback to send-keys if buffer fails
+  # Use tmux buffer only for long messages (>1000 chars) to avoid PTY truncation
+  # Short messages use direct send-keys for performance
+  if [[ ${#msg} -gt 1000 ]]; then
+    local tmpfile=$(mktemp)
+    printf '%s' "$msg" > "$tmpfile"
+    tmux load-buffer "$tmpfile" 2>/dev/null && \
+      tmux paste-buffer -t "$pane_target" 2>/dev/null || \
       tmux send-keys -l -t "$pane_target" "$msg"
-    }
     sleep 0.3
     tmux send-keys -t "$pane_target" Enter
+    rm -f "$tmpfile"
   else
-    # Ultimate fallback
     tmux send-keys -l -t "$pane_target" "$msg"
     sleep 0.2
     tmux send-keys -t "$pane_target" Enter
   fi
-  rm -f "$tmpfile"
 
   _log_history "SEND $name [$ai_label]: ${msg:0:200}"
   local win_index=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_index}:#{window_name}" 2>/dev/null | grep ":${name}$" | cut -d: -f1)
@@ -1961,9 +1941,11 @@ _recover() {
           local dir="${PROJECTS[$wname]}"
 
           # Handle dual mode tracking (format: dual:left:right)
+          # Recover left AI (right is usually orchestrator or secondary)
           if [[ "$tracked_ai" == dual:* ]]; then
             local left_ai="${tracked_ai#dual:}"
             left_ai="${left_ai%%:*}"
+            tracked_ai="$left_ai"
           fi
 
           if [[ "$tracked_ai" == "codex" ]]; then
