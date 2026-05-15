@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
-# Dev - Project launcher & Claude Code / Kimi CLI / Forge Code orchestrator
+# Dev - Project launcher & Claude Code / Kimi CLI / Forge Code / opencode orchestrator
 # Usage: dev <project> | dev list | dev start <project> | dev send <project> "msg"
-# Requires: zsh, tmux, Claude Code (https://docs.anthropic.com/en/docs/claude-code) or Kimi CLI (https://github.com/moonshot-ai/kimi-cli) or Forge Code (https://github.com/tailcallhq/forgecode)
+# Requires: zsh, tmux, Claude Code (https://docs.anthropic.com/en/docs/claude-code) or Kimi CLI (https://github.com/moonshot-ai/kimi-cli) or Forge Code (https://github.com/tailcallhq/forgecode) or opencode (https://opencode.ai)
 
 # Clear nested Claude Code detection
 unset CLAUDECODE
@@ -22,6 +22,8 @@ CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || echo "$HOME/.local/
 KIMI_BIN="${KIMI_BIN:-$(command -v kimi 2>/dev/null || echo "$HOME/.local/bin/kimi")}"
 CODEX_BIN="${CODEX_BIN:-$(command -v codex 2>/dev/null || echo "$HOME/.local/bin/codex")}"
 FORGE_BIN="${FORGE_BIN:-$(command -v forge 2>/dev/null || echo "$HOME/.local/bin/forge")}"
+OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "$HOME/.local/bin/opencode")}"
+GEMINI_BIN="${GEMINI_BIN:-$(command -v gemini 2>/dev/null || echo "$HOME/.local/bin/gemini")}"
 
 # AI window tracking file (stores which AI is running in each window)
 AI_TRACK_FILE="$CONFIG_DIR/.ai_windows"
@@ -61,6 +63,24 @@ _require_forge() {
     return 1
   fi
 }
+
+# Validate OPENCODE_BIN
+_require_opencode() {
+  if [[ ! -x "$OPENCODE_BIN" ]]; then
+    echo "ERROR: opencode binary not found or not executable: $OPENCODE_BIN"
+    echo "Install opencode: https://opencode.ai"
+    return 1
+  fi
+}
+
+# Validate GEMINI_BIN
+_require_gemini() {
+  if [[ ! -x "$GEMINI_BIN" ]]; then
+    echo "ERROR: gemini binary not found or not executable: $GEMINI_BIN"
+    echo "Install Gemini CLI: https://ai.google.dev/gemini-cli/docs"
+    return 1
+  fi
+}
 ORCH_SESSION="${ORCHESTRA_SESSION:-devenv}"
 # ORCH_DIR: dedicated orchestrator prompt directory
 # Override with ORCHESTRA_DIR env var or set in ~/.config/orchestra/orchestra.conf
@@ -68,14 +88,32 @@ ORCH_DIR="${ORCHESTRA_DIR:-$CONFIG_DIR/orchestrator}"
 MAX_CLAUDE_SESSIONS="${MAX_CLAUDE_SESSIONS:-10}"
 MAX_KIMI_SESSIONS="${MAX_KIMI_SESSIONS:-10}"
 MAX_AI_SESSIONS="${MAX_AI_SESSIONS:-10}"
-# Claude Code sets its process title to its version (e.g., "2.1.72"), not "node"
-CLAUDE_PROC_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
-# Kimi CLI process detection (Python process with kimi module)
-KIMI_PROC_PATTERN="(kimi|python.*kimi)"
-# Codex CLI runs as a node process
-CODEX_PROC_PATTERN="^node$"
-# Forge Code is a native binary
-FORGE_PROC_PATTERN="^forge$"
+# AI type patterns (DRY - single source of truth)
+# Strict patterns to minimize false positives
+declare -A AI_PATTERNS=(
+  [claude]="^[0-9]+\.[0-9]+\.[0-9]+$"
+  [kimi]="(^kimi$|python.*kimi)"            # kimi CLI or python with kimi module
+  [codex]="^node.*codex"                     # node running codex
+  [forge]="(^forge$|^/.*forge)"             # forge binary (absolute path or bare)
+  [opencode]="(^opencode$|^/.*opencode)"     # opencode binary
+  [gemini]="(^gemini$|^/.*gemini)"          # gemini binary (not general 'gemini' substring)
+)
+declare -A AI_FULL_PATTERNS=(
+  [gemini]="node.*gemini"                    # node running gemini-cli
+  [codex]="node.*codex"                      # node running codex (explicit)
+)
+
+# Legacy pattern variables (backward compat - map to AI_PATTERNS)
+CLAUDE_PROC_PATTERN="${AI_PATTERNS[claude]}"
+KIMI_PROC_PATTERN="${AI_PATTERNS[kimi]}"
+CODEX_PROC_PATTERN="${AI_PATTERNS[codex]}"
+FORGE_PROC_PATTERN="${AI_PATTERNS[forge]}"
+OPENCODE_PROC_PATTERN="${AI_PATTERNS[opencode]}"
+GEMINI_PROC_PATTERN="${AI_PATTERNS[gemini]}"
+GEMINI_FULL_PROC_PATTERN="${AI_FULL_PATTERNS[gemini]}"
+
+# opencode permission config via env (security: auto-grant, not user prompt)
+OPENCODE_PERMISSION_CONFIG='{"permission":"allow"}'
 LOG_DIR="${HOME}/.local/share/orchestra/logs"
 HISTORY_FILE="${HOME}/.local/share/orchestra/history.log"
 
@@ -458,31 +496,56 @@ _get_ai_type() {
   fi
 }
 
-_detect_ai_type() {
-  local name="$1"
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
+# AI type patterns (DRY - single source of truth)
+# Check if pane command matches AI type using both simple and full patterns
+# Returns 0 (match) or 1 (no match)
+_ai_matches() {
+  local ai="$1"
+  local pane_cmd="$2"
+  local pane_start="$3"
+  [[ -z "$ai" || -z "$pane_cmd" ]] && return 1
 
-  if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then
-    echo "claude"
-  elif [[ "$pane_cmd" =~ ^python ]] || [[ "$pane_cmd" == "kimi" ]]; then
-    echo "kimi"
-  elif [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then
-    echo "codex"
-  elif [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
-    echo "forge"
-  else
-    echo ""
-  fi
+  local pattern="${AI_PATTERNS[$ai]}"
+  local full_pattern="${AI_FULL_PATTERNS[$ai]}"
+
+  # Simple pattern match on pane_current_command
+  [[ "$pane_cmd" =~ $pattern ]] && return 0
+
+  # Full pattern match on pane_start_command (for node-based detection)
+  [[ -n "$full_pattern" && -n "$pane_start" && "$pane_start" =~ $full_pattern ]] && return 0
+
+  return 1
 }
 
+# Detect AI type from pane command - single function (DRY)
+# Uses both pane_current_command and pane_start_command for accurate detection
+_detect_ai_type() {
+  local name="$1"
+  local pane_cmd=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_current_command}" 2>/dev/null)
+  local pane_start=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_start_command}" 2>/dev/null)
+
+  for ai in claude kimi codex forge opencode gemini; do
+    if _ai_matches "$ai" "$pane_cmd" "$pane_start"; then
+      echo "$ai"
+      return 0
+    fi
+  done
+  echo ""
+  return 1
+}
+
+# Check if pane is running an AI (optimized, no tmux overhead)
+# Uses same pattern matching as _detect_ai_type
 _is_ai_running() {
   local name="$1"
   if ! _has_window "$name"; then return 1; fi
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  if [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]]; then return 0; fi
-  if [[ "$pane_cmd" =~ ^python ]] || [[ "$pane_cmd" == "kimi" ]]; then return 0; fi
-  if [[ "$pane_cmd" =~ $CODEX_PROC_PATTERN ]]; then return 0; fi
-  if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then return 0; fi
+
+  local pane_cmd=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_current_command}" 2>/dev/null)
+  local pane_start=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_start_command}" 2>/dev/null)
+
+  for ai in claude kimi codex forge opencode gemini; do
+    _ai_matches "$ai" "$pane_cmd" "$pane_start" && return 0
+  done
   return 1
 }
 
@@ -493,21 +556,41 @@ _get_ai_bin() {
     kimi) echo "$KIMI_BIN" ;;
     codex) echo "$CODEX_BIN" ;;
     forge) echo "$FORGE_BIN" ;;
+    opencode) echo "$OPENCODE_BIN" ;;
+    gemini) echo "$GEMINI_BIN" ;;
     *) echo "" ;;
   esac
 }
 
+# Launch command templates (DRY - single source for all AI launch strings)
+# Usage: eval $(echo "$CLAUDE_LAUNCH_CMD_TEMPLATE" | sed "s|{{PROJECT_DIR}}|$dir|g")
+
+_claude_worker_template() {
+  echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt '{{PROMPT}}'"
+}
+_claude_orchestrator_template() {
+  echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions"
+}
+_codex_template() { echo "'$CODEX_BIN' '{{PROMPT}}'" ; }
+_kimi_template() { echo "'$KIMI_BIN'" ; }
+_forge_template() { echo "'$FORGE_BIN'" ; }
+_gemini_worker_template() { echo "'$GEMINI_BIN'" ; }
+_gemini_orchestrator_template() { echo "'$GEMINI_BIN' --approval-mode yolo" ; }
+_opencode_template() { echo "OPENCODE_CONFIG_CONTENT='$OPENCODE_PERMISSION_CONFIG' '$OPENCODE_BIN'" ; }
+_qwen_template() { echo "qwen" ; }
+
 # Return the shell command that launches a given AI tool.
-# Supported: claude, codex, kimi, forge, qwen, gemini
+# Supported: claude, codex, kimi, forge, qwen, gemini, opencode
 _ai_launch_cmd() {
   local ai="$1"
   case "$ai" in
-    claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions" ;;
-    kimi)   echo "'$KIMI_BIN'" ;;
-    codex)  echo "'$CODEX_BIN'" ;;
-    forge)  echo "'$FORGE_BIN'" ;;
-    qwen)   echo "qwen" ;;
-    gemini) echo "gemini" ;;
+    claude) _claude_orchestrator_template ;;
+    kimi)   _kimi_template ;;
+    codex)  _codex_template ;;
+    forge)  _forge_template ;;
+    qwen)   _qwen_template ;;
+    gemini) _gemini_orchestrator_template ;;
+    opencode) _opencode_template ;;
     *)      return 1 ;;
   esac
 }
@@ -521,8 +604,9 @@ _ai_require() {
     codex)  command -v codex  >/dev/null || { echo "ERROR: codex not found in PATH"; return 1; } ;;
     forge)  command -v forge  >/dev/null || { echo "ERROR: forge not found in PATH"; return 1; } ;;
     qwen)   command -v qwen   >/dev/null || { echo "ERROR: qwen not found in PATH"; return 1; } ;;
-    gemini) command -v gemini >/dev/null || { echo "ERROR: gemini not found in PATH"; return 1; } ;;
-    *)      echo "ERROR: unknown AI type: $ai (supported: claude, codex, kimi, forge, qwen, gemini)"; return 1 ;;
+    gemini) _require_gemini ;;
+    opencode) _require_opencode ;;
+    *)      echo "ERROR: unknown AI type: $ai (supported: claude, codex, kimi, forge, qwen, gemini, opencode)"; return 1 ;;
   esac
 }
 
@@ -533,6 +617,8 @@ _orchestrator_required_reading() {
     codex)  echo "AGENTS.md, CODEX.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
     kimi)   echo "AGENTS.md, KIMI.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
     forge)  echo "AGENTS.md, FORGE.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    opencode) echo "AGENTS.md, OPENCODE.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
+    gemini) echo "AGENTS.md, GEMINI.md, ORCHESTRATOR.md, MODEL-SELECTION.md, and TROUBLESHOOTING.md" ;;
     *) return 1 ;;
   esac
 }
@@ -552,12 +638,13 @@ _worker_launch_cmd() {
   local ai="$1"
   local prompt="$(_worker_start_prompt)"
   case "$ai" in
-    claude) echo "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null; '$CLAUDE_BIN' --dangerously-skip-permissions --append-system-prompt \"$prompt\"" ;;
-    codex)  echo "'$CODEX_BIN' \"$prompt\"" ;;
-    kimi)   echo "'$KIMI_BIN'" ;;
-    forge)  echo "'$FORGE_BIN'" ;;
-    qwen)   echo "qwen" ;;
-    gemini) echo "gemini" ;;
+    claude) echo "$(_claude_worker_template | sed "s|{{PROMPT}}|$prompt|g")" ;;
+    codex)  echo "$(_codex_template | sed "s|{{PROMPT}}|$prompt|g")" ;;
+    kimi)   _kimi_template ;;
+    forge)  _forge_template ;;
+    qwen)   _qwen_template ;;
+    gemini) _gemini_worker_template ;;
+    opencode) _opencode_template ;;
     *)      return 1 ;;
   esac
 }
@@ -606,6 +693,38 @@ _send_worker_bootstrap_if_needed() {
         local pane_cmd
         pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
         if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+    opencode)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+          break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      sleep 1
+      tmux send-keys -t "$target" -l "$prompt"
+      tmux send-keys -t "$target" Enter
+      ;;
+    gemini)
+      local max_wait=15
+      local waited=0
+      while [[ $waited -lt $max_wait ]]; do
+        local pane_cmd
+        pane_cmd=$(tmux display-message -p -t "$target" "#{pane_current_command}" 2>/dev/null)
+        if [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
           break
         fi
         sleep 1
@@ -735,16 +854,18 @@ _clean_terminal_output() {
 _detect_pane_ai() {
   local name="$1"
   local pane_idx="$2"
-  local pcmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_current_command}" 2>/dev/null \
-    | awk -v i="$pane_idx" '$1==i {print $2}')
-  if [[ "$pcmd" =~ $CLAUDE_PROC_PATTERN ]]; then echo "claude"
-  elif [[ "$pcmd" == "kimi" ]] || [[ "$pcmd" =~ ^[Pp]ython ]]; then echo "kimi"
-  elif [[ "$pcmd" == "codex" ]]; then echo "codex"
-  elif [[ "$pcmd" == "forge" ]]; then echo "forge"
-  elif [[ "$pcmd" == "qwen" ]]; then echo "qwen"
-  elif [[ "$pcmd" == "gemini" ]]; then echo "gemini"
-  else echo "$pcmd"
-  fi
+  local pane_info=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_index} #{pane_current_command} #{pane_start_command}" 2>/dev/null \
+    | awk -v i="$pane_idx" '$1==i {print $2 "|" $3}')
+  local pcmd="${pane_info%%|*}"
+  local pstart="${pane_info##*|}"
+
+  for ai in claude kimi codex forge opencode gemini; do
+    if _ai_matches "$ai" "$pcmd" "$pstart"; then
+      echo "$ai"
+      return 0
+    fi
+  done
+  echo "$pcmd"
 }
 
 # Helper: check if a worker AI is idle (done with task)
@@ -754,14 +875,13 @@ _is_done() {
   local ai_type="${2:-$(_detect_ai_type "$name")}"
   if ! _has_window "$name"; then return 2; fi
 
-  local pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$name" -F "#{pane_current_command}" 2>/dev/null | head -1)
-  
-  # Check if it's an AI process
+  local pane_cmd=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_current_command}" 2>/dev/null)
+  local pane_start=$(tmux display-message -p -t "$ORCH_SESSION:$name" "#{pane_start_command}" 2>/dev/null)
+
   local is_ai=false
-  [[ "$pane_cmd" =~ $CLAUDE_PROC_PATTERN ]] && is_ai=true
-  [[ "$pane_cmd" =~ ^[Pp]ython ]] && is_ai=true
-  [[ "$pane_cmd" == "kimi" ]] && is_ai=true
-  [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]] && is_ai=true
+  for ai in claude kimi codex forge opencode gemini; do
+    _ai_matches "$ai" "$pane_cmd" "$pane_start" && is_ai=true && break
+  done
   [[ "$is_ai" == false ]] && return 2
 
   # NOTE: Forge state detection is best-effort. Forge TUI idle/active
@@ -891,6 +1011,10 @@ _list() {
         sess_state="[kimi]"
       elif [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
         sess_state="[forge]"
+      elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+        sess_state="[opencode]"
+      elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+        sess_state="[gemini]"
       else
         sess_state="[shell]"
       fi
@@ -980,7 +1104,7 @@ _start() {
 
   if [[ -z "$name" ]]; then
     echo "Usage: dev start <project> [--dual [left_ai] [right_ai]]"
-    echo "  Supported AI types: claude, codex, kimi, forge, qwen, gemini"
+    echo "  Supported AI types: claude, codex, kimi, forge, qwen, gemini, opencode"
     echo "  Default dual: claude + codex"
     return 1
   fi
@@ -1091,8 +1215,8 @@ _start_dual() {
 
   # Resolve launch commands and verify binaries
   local left_cmd right_cmd
-  left_cmd=$(_worker_launch_cmd "$left_ai")  || { echo "ERROR: unknown left AI '$left_ai' (supported: claude, codex, kimi, forge, qwen, gemini)"; return 1; }
-  right_cmd=$(_worker_launch_cmd "$right_ai") || { echo "ERROR: unknown right AI '$right_ai' (supported: claude, codex, kimi, forge, qwen, gemini)"; return 1; }
+  left_cmd=$(_worker_launch_cmd "$left_ai")  || { echo "ERROR: unknown left AI '$left_ai' (supported: claude, codex, kimi, forge, qwen, gemini, opencode)"; return 1; }
+  right_cmd=$(_worker_launch_cmd "$right_ai") || { echo "ERROR: unknown right AI '$right_ai' (supported: claude, codex, kimi, forge, qwen, gemini, opencode)"; return 1; }
   _ai_require "$left_ai"  || return 1
   _ai_require "$right_ai" || return 1
   _ensure_session || return 1
@@ -1373,9 +1497,9 @@ _send() {
   local target="left"
   local msg_parts=()
 
-  # Parse: dev send <project> [--qwen|--right|--left] <message>
+  # Parse: dev send <project> [--qwen|--right|--left|--opencode] <message>
   for arg in "$@"; do
-    if [[ "$arg" == "--qwen" || "$arg" == "--right" ]]; then
+    if [[ "$arg" == "--qwen" || "$arg" == "--right" || "$arg" == "--opencode" || "$arg" == "--gemini" ]]; then
       target="right"
     elif [[ "$arg" == "--left" ]]; then
       target="left"
@@ -1418,22 +1542,21 @@ _send() {
   [[ -z "$ai_label" ]] && ai_label="unknown"
   local ai_type="$ai_label"
 
-  # Flatten multi-line messages to single line
-  # (Both AI TUIs collapse pasted multi-line text into "[Pasted text]" and won't send it)
+  # Flatten multi-line messages to single line for AI TUIs
+  # (Most AI TUIs collapse pasted multi-line text into "[Pasted text]" and won't process it)
   msg="${msg//$'\n'/ }"
   msg="${msg//$'\r'/ }"
 
+  # Use tmux buffer only for long messages (>1000 chars) to avoid PTY truncation
+  # Short messages use direct send-keys for performance
   if [[ ${#msg} -gt 1000 ]]; then
     local tmpfile=$(mktemp)
     printf '%s' "$msg" > "$tmpfile"
-    tmux load-buffer "$tmpfile" && \
-      tmux paste-buffer -t "$pane_target" && \
-      sleep 0.3 && \
-      tmux send-keys -t "$pane_target" Enter || {
-        echo "ERROR: Failed to send long message to $name"
-        rm -f "$tmpfile"
-        return 1
-      }
+    tmux load-buffer "$tmpfile" 2>/dev/null && \
+      tmux paste-buffer -t "$pane_target" 2>/dev/null || \
+      tmux send-keys -l -t "$pane_target" "$msg"
+    sleep 0.3
+    tmux send-keys -t "$pane_target" Enter
     rm -f "$tmpfile"
   else
     tmux send-keys -l -t "$pane_target" "$msg"
@@ -1468,6 +1591,10 @@ _status() {
         sess_state="codex"
       elif [[ "$pcmd" =~ $FORGE_PROC_PATTERN ]]; then
         sess_state="forge"
+      elif [[ "$pcmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+        sess_state="opencode"
+      elif [[ "$pcmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pcmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+        sess_state="gemini"
       fi
       printf "  %-4s %-18s %-12s %s\n" "$idx" "$wname" "[$sess_state]" "${dir/$HOME/~}"
     done <<< "$windows"
@@ -1495,6 +1622,8 @@ _broadcast() {
   local kimi_count=0
   local codex_count=0
   local forge_count=0
+  local opencode_count=0
+  local gemini_count=0
   local skipped=0
   if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
     local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}" 2>/dev/null)
@@ -1514,6 +1643,12 @@ _broadcast() {
       elif [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
         is_ai=true
         forge_count=$((forge_count + 1))
+      elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+        is_ai=true
+        opencode_count=$((opencode_count + 1))
+      elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+        is_ai=true
+        gemini_count=$((gemini_count + 1))
       fi
       
       if [[ "$is_ai" == true ]]; then
@@ -1524,8 +1659,8 @@ _broadcast() {
       fi
     done <<< "$windows"
   fi
-  local total=$((claude_count + kimi_count + codex_count + forge_count))
-  echo "Broadcast to $total AI sessions (Claude: $claude_count, Kimi: $kimi_count, Codex: $codex_count, Forge: $forge_count, skipped: $skipped)."
+  local total=$((claude_count + kimi_count + codex_count + forge_count + opencode_count + gemini_count))
+  echo "Broadcast to $total AI sessions (Claude: $claude_count, Kimi: $kimi_count, Codex: $codex_count, Forge: $forge_count, opencode: $opencode_count, gemini: $gemini_count, skipped: $skipped)."
 }
 
 # Peek at a worker's recent output
@@ -1537,7 +1672,7 @@ _peek() {
   local raw=false
 
   for arg in "$@"; do
-    if [[ "$arg" == "--qwen" || "$arg" == "--right" ]]; then
+    if [[ "$arg" == "--qwen" || "$arg" == "--right" || "$arg" == "--opencode" || "$arg" == "--gemini" ]]; then
       target="right"
     elif [[ "$arg" == "--left" ]]; then
       target="left"
@@ -1555,7 +1690,7 @@ _peek() {
   done
 
   if [[ -z "$name" ]]; then
-    echo "Usage: dev peek <project> [--qwen|--right|--left] [--screen] [--raw] [lines]"
+    echo "Usage: dev peek <project> [--qwen|--right|--left|--opencode] [--screen] [--raw] [lines]"
     return 1
   fi
 
@@ -1791,18 +1926,28 @@ _recover() {
     local kimi_recovered=0
     local codex_recovered=0
     local forge_recovered=0
+    local opencode_recovered=0
+    local gemini_recovered=0
     if tmux has-session -t "$ORCH_SESSION" 2>/dev/null; then
       local windows=$(tmux list-windows -t "$ORCH_SESSION" -F "#{window_name}|#{pane_current_command}" 2>/dev/null)
       while IFS='|' read -r wname pcmd; do
         [[ "$wname" == "orchestra" ]] && continue
         [[ -z "${PROJECTS[$wname]}" ]] && continue
-        
-        # Check current AI type and recover accordingly
-        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && [[ ! "$pcmd" =~ $CODEX_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $FORGE_PROC_PATTERN ]]; then
+
+        # Check current AI type and recover accordingly (exclude all AI types to avoid false positives)
+        if [[ ! "$pcmd" =~ $CLAUDE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ ^python ]] && [[ "$pcmd" != "kimi" ]] && [[ ! "$pcmd" =~ $CODEX_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $FORGE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $OPENCODE_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $GEMINI_PROC_PATTERN ]] && [[ ! "$pcmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
           # Window exists but no AI running - determine which AI was there
           local tracked_ai=$(_get_ai_type "$wname")
           local dir="${PROJECTS[$wname]}"
-          
+
+          # Handle dual mode tracking (format: dual:left:right)
+          # Recover left AI (right is usually orchestrator or secondary)
+          if [[ "$tracked_ai" == dual:* ]]; then
+            local left_ai="${tracked_ai#dual:}"
+            left_ai="${left_ai%%:*}"
+            tracked_ai="$left_ai"
+          fi
+
           if [[ "$tracked_ai" == "codex" ]]; then
             echo "Recovering $wname [codex]..."
             tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd codex)" Enter
@@ -1820,6 +1965,18 @@ _recover() {
             _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "kimi"
             kimi_recovered=$((kimi_recovered + 1))
             _log_history "RECOVER-KIMI $wname"
+          elif [[ "$tracked_ai" == "opencode" ]]; then
+            echo "Recovering $wname [opencode]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname" "$(_worker_launch_cmd opencode)" Enter
+            _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "opencode"
+            opencode_recovered=$((opencode_recovered + 1))
+            _log_history "RECOVER-OPENCODE $wname"
+          elif [[ "$tracked_ai" == "gemini" ]]; then
+            echo "Recovering $wname [gemini]..."
+            tmux send-keys -t "$ORCH_SESSION:$wname" "$(_worker_launch_cmd gemini)" Enter
+            _send_worker_bootstrap_if_needed "$ORCH_SESSION:$wname" "gemini"
+            gemini_recovered=$((gemini_recovered + 1))
+            _log_history "RECOVER-GEMINI $wname"
           else
             echo "Recovering $wname [claude]..."
             tmux send-keys -t "$ORCH_SESSION:$wname" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
@@ -1829,7 +1986,7 @@ _recover() {
         fi
       done <<< "$windows"
     fi
-    echo "Recovered $((claude_recovered + kimi_recovered + codex_recovered + forge_recovered)) sessions (Claude: $claude_recovered, Kimi: $kimi_recovered, Codex: $codex_recovered, Forge: $forge_recovered)."
+    echo "Recovered $((claude_recovered + kimi_recovered + codex_recovered + forge_recovered + opencode_recovered + gemini_recovered)) sessions (Claude: $claude_recovered, Kimi: $kimi_recovered, Codex: $codex_recovered, Forge: $forge_recovered, opencode: $opencode_recovered, gemini: $gemini_recovered)."
     return 0
   fi
 
@@ -1867,6 +2024,14 @@ _recover() {
   fi
   if [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
     echo "$target: Forge is already running"
+    return 0
+  fi
+  if [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+    echo "$target: OpenCode is already running"
+    return 0
+  fi
+  if [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+    echo "$target: Gemini is already running"
     return 0
   fi
 
@@ -1934,6 +2099,48 @@ _recover() {
       echo "Recovered: $target [forge]"
       _notify "$target" "Forge session recovered"
     fi
+  elif [[ "$tracked_ai" == "opencode" ]]; then
+    echo "Recovering $target [opencode]..."
+    tmux send-keys -t "$ORCH_SESSION:$target" "$(_worker_launch_cmd opencode)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$target" "opencode"
+    _log_history "RECOVER-OPENCODE $target"
+
+    local max_wait=15
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+      pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]] && break
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    if [[ $waited -ge $max_wait ]]; then
+      echo "WARNING: OpenCode may not be ready in $target"
+    else
+      echo "Recovered: $target [opencode]"
+      _notify "$target" "OpenCode session recovered"
+    fi
+  elif [[ "$tracked_ai" == "gemini" ]]; then
+    echo "Recovering $target [gemini]..."
+    tmux send-keys -t "$ORCH_SESSION:$target" "$(_worker_launch_cmd gemini)" Enter
+    _send_worker_bootstrap_if_needed "$ORCH_SESSION:$target" "gemini"
+    _log_history "RECOVER-GEMINI $target"
+
+    local max_wait=15
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+      pane_cmd=$(tmux list-panes -t "$ORCH_SESSION:$target" -F "#{pane_current_command}" 2>/dev/null | head -1)
+      [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]] && break
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    if [[ $waited -ge $max_wait ]]; then
+      echo "WARNING: Gemini may not be ready in $target"
+    else
+      echo "Recovered: $target [gemini]"
+      _notify "$target" "Gemini session recovered"
+    fi
   else
     echo "Recovering $target [claude]..."
     tmux send-keys -t "$ORCH_SESSION:$target" "cd '$dir' && $(_worker_launch_cmd claude) --resume" Enter
@@ -1984,6 +2191,10 @@ _orchestra() {
     current_ai="codex"
   elif [[ "$pane_cmd" =~ $FORGE_PROC_PATTERN ]]; then
     current_ai="forge"
+  elif [[ "$pane_cmd" =~ $OPENCODE_PROC_PATTERN ]]; then
+    current_ai="opencode"
+  elif [[ "$pane_cmd" =~ $GEMINI_PROC_PATTERN ]] || [[ "$pane_cmd" =~ $GEMINI_FULL_PROC_PATTERN ]]; then
+    current_ai="gemini"
   fi
 
   # If a different AI is running, kill it first
@@ -2146,15 +2357,16 @@ case "$1" in
     echo "  dev kimi                   Start Kimi orchestrator"
     echo "  dev codex                  Start Codex orchestrator"
     echo "  dev forge                  Start Forge orchestrator"
+    echo "  dev opencode               Start opencode orchestrator"
     echo "  dev orchestra              Start orchestrator (master session)"
     echo "  dev start <project>        Start Claude in a window (max $MAX_AI_SESSIONS total)"
     echo "  dev start <p> --dual [L] [R]  Dual pane, any AI combo (default: claude codex)"
-    echo "                               L/R ∈ {claude, codex, kimi, forge, qwen, gemini}"
+    echo "                               L/R ∈ {claude, codex, kimi, forge, qwen, gemini, opencode}"
     echo "  dev kimi start <project>   Start Kimi in a window"
     echo "  dev codex start <project>  Start Codex in a window"
     echo "  dev forge start <project>  Start Forge in a window"
-    echo "  dev send <p> [--right|--qwen|--left] <msg>   Send message (right pane in dual)"
-    echo "  dev peek <p> [--right|--qwen|--left] [lines] Read output (right pane in dual)"
+    echo "  dev send <p> [--right|--qwen|--left|--opencode] <msg>   Send message (right pane in dual)"
+    echo "  dev peek <p> [--right|--qwen|--left|--opencode] [lines] Read output (right pane in dual)"
     echo "  dev broadcast <msg>        Send to all active AI sessions"
     echo "  dev status                 Show all windows and their status"
     echo "  dev list                   List all projects"

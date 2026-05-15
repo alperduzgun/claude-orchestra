@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Manage multiple Claude Code, Kimi CLI, and Forge Code sessions from a single terminal.</strong><br>
+  <strong>Manage multiple Claude Code, Kimi CLI, Forge Code, Gemini CLI, and OpenCode sessions from a single terminal.</strong><br>
   One orchestrator AI controls worker AI sessions across your projects via tmux.
 </p>
 
@@ -23,9 +23,9 @@ Two prompts below — one for **fresh install**, one for **update**. Copy-paste 
 ### Install prompt
 
 ```
-Install Claude Orchestra — a tmux-based multi-agent AI orchestrator for Claude Code, Kimi CLI, and Forge Code.
+Install Claude Orchestra — a tmux-based multi-agent AI orchestrator for Claude Code, Kimi CLI, Forge Code, Gemini CLI, and OpenCode.
 
-Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code) OR Kimi CLI (https://github.com/moonshot-ai/kimi-cli) OR Forge Code (https://github.com/tailcallhq/forgecode)
+Prerequisites: tmux 3.0+, zsh, Claude Code (https://docs.anthropic.com/en/docs/claude-code) OR Kimi CLI (https://github.com/moonshot-ai/kimi-cli) OR Forge Code (https://github.com/tailcallhq/forgecode) OR Gemini CLI (https://ai.google.dev/gemini-cli/docs) OR OpenCode
 Recommended: Ghostty terminal (https://ghostty.org/) for auto-restore and Cmd+number window switching
 
 Steps:
@@ -85,16 +85,28 @@ Ghostty / Terminal
 - `dev` → Claude orchestrator (default)
 - `dev kimi` → Kimi orchestrator
 - `dev forge` → Forge orchestrator
+- `dev codex` → Codex orchestrator
+- `dev gemini` → Gemini orchestrator
+- `dev opencode` → OpenCode orchestrator
 
 **Worker Options:**
-- `dev start <project>` → Start Claude worker
+- `dev start <project>` → Start Claude worker (default)
+- `dev start <project> --dual <left> <right>` → Start dual AI workers
 - `dev kimi start <project>` → Start Kimi worker
 - `dev forge start <project>` → Start Forge worker
+- `dev codex start <project>` → Start Codex worker
+- `dev gemini start <project>` → Start Gemini worker
+- `dev opencode start <project>` → Start OpenCode worker
+
+Dual mode examples:
+- `dev start myapp --dual claude codex` → Claude + Codex
+- `dev start myapp --dual claude opencode` → Claude + OpenCode
+- `dev start myapp --dual kimi gemini` → Kimi + Gemini
 
 - You tell the orchestrator what to do across projects
 - It starts worker sessions and assigns tasks
 - Switch to any window with `Ctrl+A <number>` for manual control
-- Max 3 concurrent AI sessions (Claude + Kimi + Codex + Forge combined, configurable, RAM-dependent)
+- Max 3 concurrent AI sessions (Claude + Kimi + Codex + Forge + opencode + gemini combined, configurable, RAM-dependent)
 - Close Ghostty and reopen — session resumes where you left off
 - Mix and match: Claude orchestrator can control Kimi/Forge workers and vice versa!
 
@@ -120,7 +132,13 @@ Workers have zero context about your conversation. The orchestrator bridges this
 - macOS or Linux
 - [tmux](https://github.com/tmux/tmux) 3.0+
 - [zsh](https://www.zsh.org/)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) AND/OR [Kimi CLI](https://github.com/moonshot-ai/kimi-cli) AND/OR [Forge Code](https://github.com/tailcallhq/forgecode)
+- One or more AI tools:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  - [Kimi CLI](https://github.com/moonshot-ai/kimi-cli)
+  - [Forge Code](https://github.com/tailcallhq/forgecode)
+  - [Codex CLI](https://openai.com/index/codex/)
+  - [Gemini CLI](https://ai.google.dev/gemini-cli/docs)
+  - [OpenCode](https://opencode.ai)
 - [Ghostty](https://ghostty.org/) (recommended, for auto-restore)
 
 ## Install
@@ -176,10 +194,14 @@ dev forge                # Start Forge as orchestrator
 # It runs: dev start myapp && dev start backend (or dev kimi start ... or dev forge start ...)
 
 # Or manually:
-dev start myapp          # Start Claude for a project
-dev kimi start myapp     # Start Kimi for a project
-dev forge start myapp    # Start Forge for a project
-dev send myapp "fix X"   # Send a task (auto-detects Claude/Kimi)
+dev start myapp          # Start Claude worker (default)
+dev start myapp --dual claude opencode  # Claude + OpenCode dual
+dev kimi start myapp     # Start Kimi worker
+dev forge start myapp    # Start Forge worker
+dev codex start myapp    # Start Codex worker
+dev gemini start myapp   # Start Gemini worker
+dev opencode start myapp  # Start OpenCode worker
+dev send myapp "fix X"   # Send a task (auto-detects AI type)
 dev broadcast "run tests" # Send to all active AI sessions
 dev status               # See what's running
 dev kill myapp           # Stop a project session
@@ -239,12 +261,14 @@ Environment variables (set in your shell profile):
 | `ORCHESTRA_SESSION` | `devenv` | tmux session name |
 | `ORCHESTRA_DIR` | `~/.config/orchestra/orchestrator` | Dedicated orchestrator prompt directory and working directory for window 0 |
 | `ORCHESTRA_CONFIG_DIR` | `~/.config/orchestra` | Where `projects.conf` lives (can differ from `ORCHESTRA_DIR`) |
-| `ORCHESTRA_AI` | `claude` | Orchestrator AI type: `claude`, `kimi`, or `forge` |
-| `MAX_AI_SESSIONS` | `3` | Max concurrent AI sessions across Claude, Kimi, Codex, and Forge workers |
+| `ORCHESTRA_AI` | `claude` | Orchestrator AI type: `claude`, `kimi`, `forge`, `codex`, `gemini`, or `opencode` |
+| `MAX_AI_SESSIONS` | `3` | Max concurrent AI sessions across all worker types |
 | `CLAUDE_BIN` | auto-detected | Path to Claude Code binary |
 | `KIMI_BIN` | auto-detected | Path to Kimi CLI binary |
 | `CODEX_BIN` | auto-detected | Path to Codex CLI binary |
 | `FORGE_BIN` | auto-detected | Path to Forge Code binary |
+| `GEMINI_BIN` | auto-detected | Path to Gemini CLI binary |
+| `OPENCODE_BIN` | auto-detected | Path to OpenCode binary |
 | `ORCHESTRA_NOTIFY` | `1` | Set to `0`/`false`/`no`/`off` to silence desktop notifications fired by `dev wait`, `dev ask`, `dev run`, and `dev recover` |
 
 > **Note:** `ORCHESTRA_DIR` and `ORCHESTRA_CONFIG_DIR` now default to different paths. `ORCHESTRA_DIR` controls where the orchestrator AI runs and reads its dedicated prompt files. `ORCHESTRA_CONFIG_DIR` controls where the project registry, worker-safe root instructions, and shared config files live.
@@ -256,17 +280,26 @@ Environment variables (set in your shell profile):
 | `dev` / `dev o` / `dev orch` / `dev orchestra` | Start the orchestrator (default: Claude) |
 | `ORCHESTRA_AI=kimi dev` | Start Kimi orchestrator |
 | `ORCHESTRA_AI=forge dev` | Start Forge orchestrator |
-| `dev start <project>` | Start Claude in a tmux window |
-| `dev kimi start <project>` | Start Kimi in a tmux window |
-| `dev forge start <project>` | Start Forge in a tmux window |
-| `dev send <project> "msg"` | Send message to a project's AI (auto-detects Claude/Kimi/Forge) |
+| `ORCHESTRA_AI=codex dev` | Start Codex orchestrator |
+| `ORCHESTRA_AI=gemini dev` | Start Gemini orchestrator |
+| `ORCHESTRA_AI=opencode dev` | Start OpenCode orchestrator |
+| `dev start <project>` | Start Claude worker (default) |
+| `dev start <project> --dual <left> <right>` | Start dual AI workers |
+| `dev kimi start <project>` | Start Kimi worker |
+| `dev forge start <project>` | Start Forge worker |
+| `dev codex start <project>` | Start Codex worker |
+| `dev gemini start <project>` | Start Gemini worker |
+| `dev opencode start <project>` | Start OpenCode worker |
+| `dev send <project> "msg"` | Send message to a project's AI |
+| `dev send <project> --opencode "msg"` | Send to opencode worker (dual mode) |
+| `dev send <project> --gemini "msg"` | Send to gemini worker (dual mode) |
 | `dev peek <project> [lines]` | Read worker's recent output (default: 50 lines) |
 | `dev watch <project>` | Live tail of worker's log |
 | `dev done <project>` | Check if worker is idle or working |
 | `dev wait <project> [sec]` | Wait for worker to finish, then notify (default: 300s) |
 | `dev ask <project> "msg"` | Send question, wait for response (timeout: 120s) |
 | `dev run <project> "task"` | Non-interactive task (claude --print) |
-| `dev broadcast "msg"` | Send to all active AI sessions (Claude + Kimi + Codex + Forge) |
+| `dev broadcast "msg"` | Send to all active AI sessions |
 | `dev history [alias] [n]` | Show recent task history (default: 30 lines) |
 | `dev recover <project>` | Recover crashed session |
 | `dev recover --all` | Recover all crashed sessions |
@@ -282,14 +315,14 @@ Environment variables (set in your shell profile):
 
 ## Safety
 
-- `dev send` only delivers to windows running AI (Claude, Kimi, Codex, or Forge) — never to a bare shell
+- `dev send` only delivers to windows running AI workers — never to a bare shell
 - `dev broadcast` skips non-AI windows automatically
 - Session limit is enforced in the script (not just documentation)
 - AI readiness is verified before sending (polls for process, max 15s)
 - Messages >1000 chars use tmux buffer (avoids PTY silent truncation at 1024 bytes)
 - Installer never overwrites existing configs — asks before modifying
 - Alias names validated (alphanumeric, hyphens, underscores only)
-- `CLAUDE_BIN`, `KIMI_BIN`, `CODEX_BIN`, and `FORGE_BIN` quoted in all tmux commands (injection prevention)
+- All AI binary paths quoted in all tmux commands (injection prevention)
 - Notifications use safe argv passthrough (no shell interpolation)
 - AI type is tracked per window for proper recovery
 
